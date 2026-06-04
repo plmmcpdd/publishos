@@ -1,0 +1,145 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Client {
+  id              String           @id @default(cuid())
+  name            String
+  industry        String?
+  active          Boolean          @default(true)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  accountBindings AccountBinding[]
+  contents        Content[]
+}
+
+model AccountBinding {
+  id                String       @id @default(cuid())
+  clientId          String
+  client            Client       @relation(fields: [clientId], references: [id])
+  platform          String       // tiktok, instagram, facebook, x, youtube
+  accountUsername   String
+  businessLocation  Json?        // { country, state, city }
+  active            Boolean      @default(true)
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+  publishJobs       PublishJob[]
+  
+  @@unique([clientId, platform, accountUsername])
+}
+
+model Content {
+  id                String          @id @default(cuid())
+  clientId          String
+  client            Client          @relation(fields: [clientId], references: [id])
+  title             String
+  description       String          @db.Text
+  caption           String?         @db.Text
+  hashtags          String[]
+  videoUrl          String          // S3 key or presigned URL
+  thumbnailUrl      String?
+  aiGenerated       Boolean         @default(false)
+  aiTools           String[]
+  platforms         String[]        // target platforms
+  scheduleAt        DateTime?
+  status            ContentStatus   @default(pending_review)
+  metadata          Json?           // { industry, campaign, content_type }
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  assets            ContentAsset[]
+  publishJobs       PublishJob[]
+  complianceResults Json?           // { copyright, ai_disclosure, platform_policy }
+}
+
+model ContentAsset {
+  id            String  @id @default(cuid())
+  contentId     String
+  content       Content @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  type          String  // stock_video, client_owned, ai_generated, music
+  source        String? // envato, artgrid, client_direct, runway, etc.
+  licenseId     String?
+  url           String
+  authorizationDocUrl String?
+  description   String?
+}
+
+enum ContentStatus {
+  pending_review
+  rejected
+  approved
+  published
+  failed
+}
+
+enum JobStatus {
+  pending
+  dispatched
+  client_confirmed
+  publishing
+  published
+  failed
+  cancelled
+}
+
+model PublishJob {
+  id                  String         @id @default(cuid())
+  contentId           String
+  content             Content        @relation(fields: [contentId], references: [id])
+  accountBindingId    String
+  accountBinding      AccountBinding @relation(fields: [accountBindingId], references: [id])
+  platform            String
+  status              JobStatus      @default(pending)
+  scheduleAt          DateTime?
+  publishOptions      Json?          // platform-specific options
+  clientToken         String?        // short-lived token for client app
+  jobToken            String?        // one-time token for status callback
+  platformPostId      String?
+  platformPostUrl     String?
+  publishedAt         DateTime?
+  failedAt            DateTime?
+  errorCode           String?
+  errorDetail         String?
+  retryable           Boolean         @default(false)
+  deviceFingerprint   Json?
+  screenshotUrl       String?
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+  history             JobHistory[]
+}
+
+model JobHistory {
+  id          String     @id @default(cuid())
+  jobId       String
+  job         PublishJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  status      String
+  changedAt   DateTime   @default(now())
+  changedBy   String?    // user_id or system
+  notes       String?
+}
+
+model Device {
+  id          String   @id @default(cuid())
+  deviceId    String   @unique // hardware-bound device identifier from client app
+  clientId    String?
+  lastSeen    DateTime @default(now())
+  online      Boolean  @default(false)
+  capabilities String[] // tiktok_web, instagram_web, etc.
+  token       String   @unique // device_token for queue polling
+  createdAt   DateTime @default(now())
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  action      String   // create_content, approve_content, publish_job, etc.
+  actorId     String   // who did it
+  actorType   String   // user, system, client_app
+  targetType  String   // content, publish_job, account
+  targetId    String
+  details     Json?
+  ipAddress   String?
+  createdAt   DateTime @default(now())
+}
