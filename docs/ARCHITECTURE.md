@@ -1,341 +1,450 @@
-# 技术架构文档 — 发布网关
-> 版本: 1.0 | 适用: 外部开发团队（AWS 部署）
+# PublishOS — Architecture Document
 
----
-
-## 架构总览
+## 1. 系统架构图
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              中国团队（内容生产）                               │
-│  ┌──────────────────┐                                                       │
-│  │ 扣子/Coze 工作流   │  ← 内容生成、脚本改写（已有，不改动）                   │
-│  │ 内容生产工具       │                                                       │
-│  └────────┬─────────┘                                                       │
-│           │                                                                  │
-│           │  通过 Tailscale VPN 隧道                                            │
-│           ▼                                                                  │
-│  ┌──────────────────┐     ┌──────────────────┐                               │
-│  │  Bastion Host    │────▶│  发布网关 API    │  ← 仅开放 443 端口             │
-│  │  (跳板机)         │     │  (AWS ECS)       │                               │
-│  └──────────────────┘     └────────┬─────────┘                               │
-│                                     │                                        │
-└─────────────────────────────────────┼────────────────────────────────────────┘
-                                      │
-                                      ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              美国 AWS 区域 (us-east-1)                        │
-│                                                                             │
-│  ┌──────────────────────────────────────────────────────────────────┐       │
-│  │                         VPC (10.0.0.0/16)                         │       │
-│  │                                                                  │       │
-│  │  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐      │       │
-│  │  │  Public Sub  │    │  Private Sub │    │  Private Sub │      │       │
-│  │  │  (ALB/ECS)   │    │  (ECS Tasks) │    │  (RDS/S3)    │      │       │
-│  │  │  10.0.1.0/24 │    │  10.0.2.0/24 │    │  10.0.3.0/24│      │       │
-│  │  └──────┬───────┘    └──────┬───────┘    └──────┬───────┘      │       │
-│  │         │                  │                   │              │       │
-│  │         ▼                  ▼                   ▼              │       │
-│  │  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐      │       │
-│  │  │  AWS ALB     │───▶│  ECS Fargate │───▶│  RDS         │      │       │
-│  │  │  (HTTPS)     │    │  (Node.js)   │    │  PostgreSQL  │      │       │
-│  │  └──────────────┘    └──────────────┘    └──────────────┘      │       │
-│  │         │                  │                   │              │       │
-│  │         │                  └───────────────────┘              │       │
-│  │         │                         │                              │       │
-│  │         │                         ▼                              │       │
-│  │         │                  ┌──────────────┐                     │       │
-│  │         │                  │  AWS S3      │                     │       │
-│  │         │                  │  (内容存储)   │                     │       │
-│  │         │                  └──────────────┘                     │       │
-│  │         │                                                       │       │
-│  │         └───────────────────────────────────────────────────────┘       │
-│  │                              │                                           │
-│  └──────────────────────────────┼───────────────────────────────────────────┘
-│                                 │
-│                                 ▼
-│  ┌──────────────────────────────────────────────────────────────────┐       │
-│  │  Secrets Manager / Systems Manager                                │       │
-│  │  - JWT_SECRET                                                     │       │
-  │  │  - DATABASE_URL                                                   │       │
-│  │  - S3 credentials                                                   │       │
-│  └──────────────────────────────────────────────────────────────────┘       │
-│                                                                             │
-│  ┌──────────────────────────────────────────────────────────────────┐       │
-│  │  Tailscale / AWS Client VPN                                       │       │
-│  │  - 中国团队零信任接入                                               │       │
-│  │  - 仅允许访问 Bastion Host (22/443)                                │       │
-│  └──────────────────────────────────────────────────────────────────┘       │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-                                      │
-                                      │  Internet
-                                      ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              客户端设备（客户本地）                             │
-│  ┌──────────────────────────────────────────────────────────────────┐       │
-│  │  Electron 桌面应用 (macOS/Windows)                                │       │
-│  │  - 本地 Chromium 浏览器                                            │       │
-│  │  - TikTok/Instagram 登录态持久化                                    │       │
-│  │  - 视频下载 + 自动上传                                             │       │
-│  └──────────────────────────────────────────────────────────────────┘       │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│                           CLIENT SIDE                                │
+│  ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐   │
+│  │ Windows Client  │    │  macOS Client   │    │  macOS Client   │   │
+│  │ (Electron)      │    │  (Electron)     │    │  (Electron)     │   │
+│  │                 │    │  Apple Silicon  │    │  Intel          │   │
+│  │ ┌───────────┐   │    │                 │    │                 │   │
+│  │ │ Local     │   │    │ ┌───────────┐   │    │ ┌───────────┐   │   │
+│  │ │ Browser   │   │    │ │ Local     │   │    │ │ Local     │   │   │
+│  │ │ (Chromium)│   │    │ │ Browser   │   │    │ │ Browser   │   │   │
+│  │ └───────────┘   │    │ │ (Chromium)│   │    │ │ (Chromium)│   │   │
+│  └────────┬────────┘    │ └───────────┘   │    │ └───────────┘   │   │
+│           │               └────────┬────────┘    └────────┬────────┘   │
+│           │                        │                        │            │
+│           │      Device Token      │      Device Token      │            │
+│           │         (HTTPS)        │         (HTTPS)        │            │
+│           ▼                        ▼                        ▼            │
+└─────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    │ HTTPS (TLS 1.3)
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                      AWS US-East VPC (us-east-1)                     │
+│                                                                      │
+│  ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐ │
+│  │  API Gateway    │───▶│  Application    │───▶│  PostgreSQL     │ │
+│  │  (ALB / Nginx)  │    │  Server         │    │  (RDS)          │ │
+│  │                 │    │  (Node/Express) │    │                 │ │
+│  │                 │    │                 │    │  ┌───────────┐ │ │
+│  │                 │    │                 │    │  │ Content   │ │ │
+│  │                 │    │                 │    │  │ Client    │ │ │
+│  │                 │    │                 │    │  │ Audit     │ │ │
+│  │                 │    │                 │    │  │ ...       │ │ │
+│  │                 │    │                 │    │  └───────────┘ │ │
+│  └────────┬────────┘    └────────┬────────┘    └────────┬────────┘ │
+│           │                      │                      │           │
+│           │                      │                      │           │
+│           │                      ▼                      │           │
+│           │            ┌─────────────────┐            │           │
+│           │            │  S3 Bucket      │            │           │
+│           │            │  (Media Storage)│            │           │
+│           │            │                 │            │           │
+│           │            │  ┌───────────┐ │            │           │
+│           │            │  │ Videos    │ │            │           │
+│           │            │  │ Images    │ │            │           │
+│           │            │  │ Presigned │ │            │           │
+│           │            │  │ URLs      │ │            │           │
+│           │            │  └───────────┘ │            │           │
+│           │            └─────────────────┘            │           │
+│           │                      │                      │           │
+│           │                      ▼                      │           │
+│           │            ┌─────────────────┐            │           │
+│           │            │ Secrets Manager  │            │           │
+│           │            │ (Credentials)    │            │           │
+│           │            │                  │            │           │
+│           │            │ ┌─────────────┐ │            │           │
+│           │            │ │ DB Password │ │            │           │
+│           │            │ │ API Keys    │ │            │           │
+│           │            │ │ JWT Secret  │ │            │           │
+│           │            │ └─────────────┘ │            │           │
+│           │            └─────────────────┘            │           │
+│           │                                           │           │
+│  ┌────────▼────────┐                                  │           │
+│  │  Tailscale      │                                  │           │
+│  │  Subnet Router  │◄─────────────────────────────────┘           │
+│  │  (Bastion)      │                                                  │
+│  └────────┬────────┘                                                  │
+│           │ Tailscale VPN (WireGuard)                                  │
+│           │ Only port 22/443                                           │
+│           │ All ops audited                                            │
+│           ▼                                                            │
+└─────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    │ Zero-Trust VPN
+                                    │ (No direct China internet access)
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                         CHINA DELIVERY TEAM                          │
+│  ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐   │
+│  │  Content Team   │    │  Content Team   │    │  Content Team   │   │
+│  │  (Workstation 1)│    │  (Workstation 2)│    │  (Workstation 3)│   │
+│  │                 │    │                 │    │                 │   │
+│  │  ┌───────────┐  │    │  ┌───────────┐  │    │  ┌───────────┐  │   │
+│  │  │ Coze /    │  │    │  │ Coze /    │  │    │  │ Coze /    │  │   │
+│  │  │ 扣子      │  │    │  │ 扣子      │  │    │  │ 扣子      │  │   │
+│  │  │ Platform  │  │    │  │ Platform  │  │    │  │ Platform  │  │   │
+│  │  └───────────┘  │    │  └───────────┘  │    │  └───────────┘  │   │
+│  │                 │    │                 │    │                 │   │
+│  │  Envato Elements│    │  Envato Elements│    │  Envato Elements│   │
+│  │  Artgrid        │    │  Artgrid        │    │  Artgrid        │   │
+│  └────────┬────────┘    └────────┬────────┘    └────────┬────────┘   │
+│           │                      │                      │            │
+│           └──────────────────────┼──────────────────────┘            │
+│                                  │                                    │
+│                                  │ Upload Content (HTTPS)             │
+│                                  ▼                                    │
+│                           ┌─────────────┐                            │
+│                           │  Bastion    │                            │
+│                           │  Host       │                            │
+│                           │  (Jump Box) │                            │
+│                           └─────────────┘                            │
+│                                  │                                    │
+│                                  │ SSH to US VPC                      │
+│                                  ▼                                    │
+│                           ┌─────────────┐                            │
+│                           │  Tailscale  │                            │
+│                           │  Coordination│                            │
+│                           │  Server     │                            │
+│                           └─────────────┘                            │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
----
+## 2. 网络架构
 
-## 网络层
+### 2.1 AWS VPC 设计 (us-east-1)
 
-### VPC 设计
+| 资源 | 规格 | 用途 | 月费用 |
+|------|------|------|--------|
+| EC2 (Application) | t3.medium | API Gateway + Application Server | ~$30 |
+| RDS PostgreSQL | db.t3.micro | 主数据库 | ~$15 |
+| S3 | Standard | 媒体存储 + 备份 | ~$5-20 |
+| ALB | Application Load Balancer | HTTPS 终止 + 流量分发 | ~$20 |
+| Secrets Manager | Standard | 凭证管理 | ~$0.40/secret |
+| CloudWatch | Basic | 日志 + 监控 | ~$5-10 |
+| **总计** | | | **~$75-100/月** |
 
-| 组件 | 配置 | 用途 |
+### 2.2 安全组规则
+
+| 来源 | 目标 | 端口 | 协议 | 说明 |
+|------|------|------|------|------|
+| 0.0.0.0/0 | ALB | 443 | HTTPS | 客户端 API 访问 |
+| ALB | EC2 | 3000 | TCP | 内部应用通信 |
+| EC2 | RDS | 5432 | TCP | 数据库访问 |
+| EC2 | S3 | 443 | HTTPS | 媒体存储访问 |
+| EC2 | Secrets Manager | 443 | HTTPS | 凭证获取 |
+| Tailscale Subnet | EC2 | 22 | SSH | 运维管理 |
+| Tailscale Subnet | RDS | 5432 | TCP | 数据库管理 |
+
+**注意：** 80 端口不开放。所有 HTTP 请求强制重定向到 HTTPS。
+
+### 2.3 Tailscale 零信任网络
+
+| 组件 | 配置 | 说明 |
 |------|------|------|
-| VPC | `10.0.0.0/16`, us-east-1 | 主网络隔离 |
-| Public Subnet | `10.0.1.0/24` | ALB、NAT Gateway、Bastion Host |
-| Private Subnet A | `10.0.2.0/24` | ECS Fargate 任务（无公网 IP） |
-| Private Subnet B | `10.0.3.0/24` | RDS PostgreSQL、S3 VPC Endpoint |
+| 美国 VPC Subnet Router | EC2 实例运行 Tailscale | 中国团队访问 AWS 资源的入口 |
+| 中国团队设备 | Tailscale 客户端 | 每台工作机安装，通过认证后加入网络 |
+| ACL Rules | 最小权限 | 只允许 SSH (22) 和 HTTPS (443) |
+| MagicDNS | 启用 | 设备通过主机名访问，不用记 IP |
+| Audit Logging | 启用 | 所有网络访问记录日志 |
 
-**流量路径:**
-1. 客户端 App → Internet → AWS ALB (Public Subnet) → ECS Fargate (Private Subnet A)
-2. ECS → RDS (Private Subnet B, 5432)
-3. ECS → S3 VPC Endpoint (Private Subnet B, 不经过公网)
-4. 中国团队 → Tailscale → Bastion Host → ALB → ECS
-
-### 零信任网络 (Tailscale)
-
-**方案 A: Tailscale (推荐)**
-- 在美国 VPC 的 Bastion Host 上安装 Tailscale
-- 中国团队成员各自安装 Tailscale 客户端，加入同一 tailnet
-- 配置 ACL: 中国团队设备只能访问 `tag:bastion` 的 22/443 端口
-- 成本: $5/用户/月 (Business Plan)
-
-**方案 B: AWS Client VPN**
-- 在 VPC 中创建 Client VPN Endpoint
-- 中国团队通过 OpenVPN 客户端连接
-- 成本: $0.10/endpoint/小时 + $0.05/连接/小时
-- 缺点: 配置复杂，连接稳定性不如 Tailscale
-
-**推荐 Tailscale**，运维成本最低，且天然支持 mesh 网络。
-
----
-
-## 计算层
-
-### ECS Fargate (无服务器容器)
-
-| 配置 | 建议 |
-|------|------|
-| Task CPU | 0.5 vCPU (起步) / 1 vCPU (生产) |
-| Task Memory | 1 GB (起步) / 2 GB (生产) |
-| 并发任务 | 2-4 个 |
-| 自动扩展 | CPU > 70% 时扩展到 4 个任务 |
-| 健康检查 | `/health` 每 30 秒 |
-
-**为什么不用 EC2:**
-- 不需要 SSH 管理服务器
-- 自动补丁和安全更新
-- 按实际使用付费，无运行成本
-
-### 容器镜像
-
-```dockerfile
-FROM node:20-alpine
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci --only=production
-COPY prisma ./prisma
-RUN npx prisma generate
-COPY dist ./dist
-EXPOSE 3000
-CMD ["node", "dist/server.js"]
-```
-
----
-
-## 数据层
-
-### RDS PostgreSQL
-
-| 配置 | 建议 |
-|------|------|
-| 实例类型 | db.t3.micro (起步) / db.t3.medium (生产) |
-| 存储 | 20 GB GP2, 自动扩展 |
-| 多可用区 | 生产环境启用 |
-| 备份 | 7 天自动备份 + 每日快照 |
-| 加密 | 启用存储加密 (KMS) |
-| 公网访问 | **禁用** |
-
-### S3 存储策略
-
-| 桶 | 用途 | 访问策略 |
-|----|------|----------|
-| `publish-gateway-assets` | 视频/缩略图/素材 | 私有，仅通过预签名 URL 访问 |
-| `publish-gateway-screenshots` | 发布成功截图存证 | 私有，保留 90 天 |
-| `publish-gateway-docs` | 授权文档/发票 | 私有，长期保留 |
-| `publish-gateway-logs` | 审计日志备份 | 归档存储，保留 3 年 |
-
-**S3 预签名 URL 策略:**
-- 有效期: 15 分钟 (900 秒)
-- 签名算法: AWS4-HMAC-SHA256
-- 客户端下载失败 → 重新轮询 `/v1/client/queue` 获取新 URL
-
----
-
-## 安全层
-
-### Secrets Manager
-
-所有敏感配置通过 AWS Secrets Manager 注入，**绝不硬编码**。
-
-| Secret 名称 | 内容 | 轮换策略 |
-|-------------|------|----------|
-| `publish-gateway/jwt-secret` | JWT_SECRET (≥32 字符随机串) | 每 90 天 |
-| `publish-gateway/db-credentials` | DATABASE_URL | 每 90 天 |
-| `publish-gateway/s3-credentials` | AWS_ACCESS_KEY_ID + AWS_SECRET | 每 90 天 |
-| `publish-gateway/tailscale-auth` | TAILSCALE_AUTH_KEY | 每次部署 |
-
-**ECS 任务通过 `secrets` 字段注入:**
+**ACL 示例：**
 ```json
 {
-  "secrets": [
+  "acls": [
     {
-      "name": "JWT_SECRET",
-      "valueFrom": "arn:aws:secretsmanager:...:secret:publish-gateway/jwt-secret"
+      "action": "accept",
+      "src": ["group:china-team"],
+      "dst": ["tag:aws-vpc:22", "tag:aws-vpc:443"]
     }
   ]
 }
 ```
 
-### IAM 权限模型
+## 3. 数据流
 
-| 角色 | 权限 |
-|------|------|
-| `ecs-task-role` | 读取 Secrets Manager、写入 S3、写入 CloudWatch Logs |
-| `bastion-role` | 仅允许 Tailscale 入站 22/443，无 ECS/RDS 直接访问 |
-| `rds-role` | 仅允许 ECS 安全组访问 5432 |
+### 3.1 内容上传流程（中国团队）
 
-### 中国团队访问控制
-
-- 内容创建 API (`POST /v1/content`) 仅允许 Tailscale 网段 IP 访问
-- 建议在 ALB 层配置 WAF 规则，拒绝非 Tailscale 网段的 `POST /v1/content` 请求
-- 运营审核 API (`POST /v1/content/:id/approve`) 建议额外要求 MFA
-
----
-
-## 部署流程
-
-### CI/CD 建议 (GitHub Actions)
-
-```yaml
-name: Deploy to ECS
-on:
-  push:
-    branches: [main]
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::...:role/github-actions-deploy
-          aws-region: us-east-1
-      - name: Build and Push Docker Image
-        run: |
-          docker build -t publish-gateway:${{ github.sha }} .
-          docker push publish-gateway:${{ github.sha }}
-      - name: Deploy to ECS
-        run: |
-          aws ecs update-service --cluster publish-gateway --service api --force-new-deployment
+```
+[Content Team Workstation]
+       │
+       │ 1. Generate content in Coze
+       │ 2. Upload to PublishOS Gateway
+       │    POST /v1/contents
+       │    Headers: Bearer {operator_jwt}
+       │
+       ▼
+[Tailscale VPN] ──▶ [Bastion Host] ──▶ [AWS ALB]
+       │
+       ▼
+[Application Server (EC2)]
+       │
+       ├─▶ Validate license chain
+       ├─▶ Compliance check (AI label, ad copy)
+       ├─▶ Store metadata in PostgreSQL
+       ├─▶ Upload media to S3
+       │
+       ▼
+[Response: 201 Created]
+       content_id: "cnt_abc123"
+       status: "pending_review"
 ```
 
-### 环境分离
+### 3.2 内容审核流程（美国运营）
 
-| 环境 | AWS 账户 | 数据库 | 用途 |
-|------|----------|--------|------|
-| dev | 美国公司测试账户 | 本地 Docker Postgres | 开发调试 |
-| staging | 美国公司主账户 | RDS (t3.micro) | 集成测试 |
-| production | 美国公司主账户 | RDS (t3.medium, 多AZ) | 生产 |
+```
+[US Operator Dashboard]
+       │
+       │ GET /v1/contents?status=pending_review
+       │
+       ▼
+[AWS ALB] ──▶ [Application Server] ──▶ [PostgreSQL]
+       │
+       ▼
+[Display: Content List with Audit Cards]
+       │
+       │ Operator clicks "Approve"
+       │ POST /v1/contents/:id/approve
+       │
+       ▼
+[Application Server]
+       │
+       ├─▶ Check license status (must be valid)
+       ├─▶ Update content status to "approved"
+       ├─▶ Create publish job
+       ├─▶ Generate S3 presigned URL (15 min expiry)
+       ├─▶ Write audit log
+       │
+       ▼
+[Client App notified via WebSocket / Polling]
+```
 
----
+### 3.3 客户端发布流程
 
-## 监控与告警
+```
+[Client App (Electron)]
+       │
+       │ 1. Poll /v1/queue (every 60s)
+       │    Headers: Bearer {device_token}
+       │
+       ▼
+[AWS ALB] ──▶ [Application Server]
+       │
+       ▼
+[Response: Queue with tasks + presigned URLs]
+       │
+       │ 2. Download media from S3 presigned URL
+       │ 3. Store locally (temp, 7-day cleanup)
+       │ 4. Show notification to client
+       │
+       ▼
+[Client clicks "Confirm Publish"]
+       │
+       │ 5. Open local Chromium browser
+       │ 6. Navigate to TikTok upload page
+       │ 7. Auto-fill: title, description, hashtags
+       │ 8. Attach downloaded video
+       │ 9. Client clicks TikTok's "Post" button
+       │
+       ▼
+[Client completes TikTok native upload]
+       │
+       │ 10. Capture platform_post_id
+       │ 11. POST /v1/tasks/:id/status
+       │     Headers: Bearer {task_token}
+       │     Body: { status: "published", ... }
+       │
+       ▼
+[Application Server]
+       │
+       ├─▶ Update task status
+       ├─▶ Write audit log
+       ├─▶ Update metrics dashboard
+       │
+       ▼
+[Dashboard reflects: Published ✅]
+```
 
-### CloudWatch 指标
+## 4. 安全策略
 
-| 指标 | 告警阈值 | 动作 |
+### 4.1 认证与授权
+
+| 层级 | 机制 | 有效期 | 存储位置 |
+|------|------|--------|----------|
+| 运营人员 | JWT (RS256) | 24h | 浏览器 Cookie (httpOnly, secure) |
+| 设备 | Device Token (HMAC) | 1年 | Electron keytar / macOS Keychain |
+| 任务 | Task Token (HMAC) | 单次 | 内存（不持久化） |
+| 内部服务 | mTLS (AWS ALB) | 永久 | AWS ACM |
+
+### 4.2 数据加密
+
+| 数据类型 | 传输加密 | 静态加密 | 说明 |
+|----------|----------|----------|------|
+| API 通信 | TLS 1.3 | — | 强制 HTTPS，HSTS 头 |
+| 数据库 | TLS | RDS 加密 | AWS KMS 管理 |
+| S3 媒体 | TLS | S3-SSE | AES-256 服务端加密 |
+| 密码/Token | — | Secrets Manager | 自动轮换 |
+| 客户端本地 | — | OS Keychain | 设备 token 加密存储 |
+
+### 4.3 零信任原则
+
+1. **永不信任，始终验证**：中国团队访问必须通过 Tailscale VPN + 设备认证
+2. **最小权限**：每个 API Token 只能访问特定资源，不能横向越权
+3. **假设已 breached**：审计日志记录所有操作，异常行为自动告警
+4. **凭证不落地**：客户账号密码不存储在服务器，客户端本地浏览器管理
+
+## 5. 部署策略
+
+### 5.1 环境分层
+
+| 环境 | 用途 | 数据 | 访问 |
+|------|------|------|------|
+| **Production** | 付费客户 | 真实数据 | 运营团队 + 客户端 |
+| **Staging** | 内测/验收 | 脱敏数据 | 开发团队 + 运营 |
+| **Development** | 开发调试 | 模拟数据 | 开发团队 |
+
+### 5.2 CI/CD Pipeline (建议)
+
+```
+[GitHub Push] ──▶ [GitHub Actions]
+       │
+       ├─▶ Lint + Test
+       ├─▶ Build Docker Image
+       ├─▶ Push to ECR
+       │
+       ▼
+[AWS CodeDeploy / ECS]
+       │
+       ├─▶ Staging Deploy (auto)
+       ├─▶ Manual Approval
+       ├─▶ Production Deploy (blue/green)
+       │
+       ▼
+[Health Check] ──▶ [Rollback if failed]
+```
+
+### 5.3 数据库迁移
+
+使用 Prisma Migrate：
+```bash
+npx prisma migrate dev    # Development
+npx prisma migrate deploy # Production (CI/CD)
+```
+
+## 6. 监控与告警
+
+### 6.1 监控指标
+
+| 指标 | 告警阈值 | 响应 |
 |------|----------|------|
-| ECS CPU 利用率 | > 80% 持续 5 分钟 | Slack 告警 + 自动扩展 |
-| RDS 连接数 | > 80% 最大连接数 | 邮件告警 |
-| API 5xx 错误率 | > 1% 持续 5 分钟 | PagerDuty 告警 |
-| 任务失败率 | > 10% 当日 | 运营 Slack 告警 |
+| API 5xx 错误率 | > 1% | PagerDuty → 研发 |
+| 响应时间 P95 | > 500ms | Slack 告警 |
+| 发布成功率 | < 90% | 运营团队通知 |
+| 客户端心跳丢失 | > 10 min | 客户关怀通知 |
+| 数据库连接数 | > 80% | 自动扩容 |
+| S3 存储容量 | > 80% | 扩容告警 |
 
-### 日志聚合
+### 6.2 日志策略
 
-- ECS 任务日志 → CloudWatch Logs (`/aws/ecs/publish-gateway`)
-- 结构化日志格式: JSON，包含 `trace_id`, `user_id`, `duration_ms`
-- 日志保留: 30 天 (CloudWatch) + 3 年 (S3 归档)
+| 日志类型 | 保留期 | 存储 | 格式 |
+|----------|--------|------|------|
+| API 访问日志 | 90 天 | CloudWatch Logs | JSON |
+| 审计日志 | 3 年 | S3 + Glacier | JSON + 签名 |
+| 错误日志 | 30 天 | CloudWatch Logs | JSON + Stack |
+| 客户端日志 | 7 天 | S3 (客户同意) | 匿名化 |
+
+## 7. 备份与灾难恢复
+
+### 7.1 备份策略
+
+| 数据 | 频率 | 保留期 | 存储位置 |
+|------|------|--------|----------|
+| 数据库 | 每日自动快照 | 30 天 | RDS 快照 + S3 |
+| 媒体文件 | 实时同步 | 永久 | S3 跨区域复制 |
+| 审计日志 | 实时归档 | 3 年 | S3 + Glacier |
+
+### 7.2 RTO / RPO
+
+| 指标 | 目标 | 说明 |
+|------|------|------|
+| RTO (恢复时间) | < 4 小时 | 从备份恢复到服务可用 |
+| RPO (数据丢失) | < 24 小时 | 最多丢失 24 小时数据 |
+| 客户端影响 | 最小 | 客户端 App 可离线缓存，恢复后同步 |
+
+## 8. 成本估算
+
+### 8.1 AWS 月度成本（生产环境）
+
+| 服务 | 规格 | 月费用 |
+|------|------|--------|
+| EC2 (App) | t3.medium | $30 |
+| RDS PostgreSQL | db.t3.micro | $15 |
+| S3 | 100GB Standard | $5 |
+| ALB | 标准 | $20 |
+| Secrets Manager | 10 secrets | $4 |
+| CloudWatch | 基础 | $5 |
+| Tailscale | 5 users | $25 |
+| 数据传输 | 50GB/月 | $5 |
+| **总计** | | **~$109/月** |
+
+### 8.2 扩展成本（100 客户）
+
+| 服务 | 升级 | 月费用 |
+|------|------|--------|
+| EC2 | t3.large | $60 |
+| RDS | db.t3.small | $30 |
+| S3 | 1TB | $23 |
+| ALB | 标准 | $22 |
+| **总计** | | **~$170/月** |
+
+### 8.3 一次性费用
+
+| 项目 | 费用 | 说明 |
+|------|------|------|
+| Route53 域名 | $12/年 | 域名注册 |
+| ACM SSL 证书 | 免费 | AWS 免费 |
+| 代码签名证书 | $200/年 | Electron App 签名 |
+
+## 9. 技术栈
+
+| 层 | 技术 | 版本 | 说明 |
+|----|------|------|------|
+| 客户端 | Electron | 30+ | 桌面跨平台 |
+| 客户端 UI | React + Tailwind CSS | 18+ / 3+ | 界面框架 |
+| 客户端状态 | Zustand | 4+ | 轻量状态管理 |
+| 后端 | Node.js | 20 LTS | 运行时 |
+| 后端框架 | Express | 4+ | Web 框架 |
+| 数据库 | PostgreSQL | 15+ | 关系数据库 |
+| ORM | Prisma | 5+ | 数据库访问 |
+| 对象存储 | AWS S3 | — | 媒体文件 |
+| 凭证管理 | AWS Secrets Manager | — | 安全凭证 |
+| 监控 | CloudWatch + Sentry | — | 日志 + 错误追踪 |
+| VPN | Tailscale | — | 零信任网络 |
+| 部署 | Docker + ECS / EC2 | — | 容器化部署 |
+
+## 10. 外部依赖与风险
+
+| 依赖 | 风险 | 缓解措施 |
+|------|------|----------|
+| AWS 服务可用性 | 区域故障 | 多 AZ 部署，跨区域备份 |
+| TikTok 平台政策 | 规则变更 | 监控 + 保险 + 合同免责 |
+| Tailscale 服务 | 网络中断 | 本地缓存 + 重试机制 |
+| 中国出口网络 | 不稳定 | Tailscale 自动重连 + 异步队列 |
+| Prisma 版本 | 破坏性更新 | 锁定版本，定期升级测试 |
+
+## 11. 版本历史
+
+| Version | Date | Changes |
+|---------|------|---------|
+| 1.0 | 2026-06-04 | Initial architecture for handoff |
 
 ---
 
-## 成本估算（月度）
-
-| 服务 | 起步 | 生产 (50 客户) |
-|------|------|----------------|
-| ECS Fargate | $25 (2 tasks, 0.5 vCPU) | $150 (4 tasks, 1 vCPU) |
-| RDS PostgreSQL | $15 (db.t3.micro) | $150 (db.t3.medium, 多AZ) |
-| ALB | $20 | $25 |
-| S3 存储 | $10 (100GB) | $50 (500GB) |
-| Secrets Manager | $5 | $10 |
-| CloudWatch | $5 | $20 |
-| Tailscale | $15 (3 users) | $50 (10 users) |
-| **总计** | **~$95** | **~$455** |
-
----
-
-## 数据隔离合规
-
-### 中美数据边界
-
-| 数据类型 | 存储位置 | 访问方式 | 清除策略 |
-|----------|----------|----------|----------|
-| 客户个人信息 | 美国 RDS | 仅美国运营团队 | 客户终止后 90 天删除 |
-| 社交账号凭证 | **不存储** | 客户端本地管理 | N/A |
-| 内容素材 | 美国 S3 | 预签名 URL | 客户终止后 30 天删除 |
-| 视频工程文件 | 中国本地 | 加密后传输到美国 | 中国本地 7 天内清除 |
-| 审计日志 | 美国 RDS + S3 | 运营后台查询 | 保留 3 年 |
-
-### 数据不出境原则
-
-- 客户个人数据、社交账号数据、发布记录**不存储在中国服务器**
-- 中国团队的工作产物（脚本、工程文件）在**加密传输到美国 S3 后，中国本地副本应在 7 天内清除**
-- 建议在中国团队工作站上配置自动清理脚本，删除超过 7 天的本地项目文件
-
----
-
-## 外部团队部署 Checklist
-
-- [ ] 创建 AWS 账户（美国公司名义）
-- [ ] 配置 VPC + 3 个子网 (Public/Private A/Private B)
-- [ ] 创建 RDS PostgreSQL（禁用公网访问，启用加密）
-- [ ] 创建 S3 桶（私有，启用版本控制）
-- [ ] 配置 Secrets Manager（JWT_SECRET, DB_URL, S3 credentials）
-- [ ] 创建 ECS 集群 + Fargate 服务
-- [ ] 配置 ALB + HTTPS（ACM 证书）
-- [ ] 配置 Tailscale tailnet + ACL 规则
-- [ ] 部署 Bastion Host（Tailscale + 仅允许 22/443）
-- [ ] 配置 GitHub Actions OIDC 角色（无需长期 AWS 凭证）
-- [ ] 配置 CloudWatch 告警 + Slack 集成
-- [ ] 执行首次数据库迁移 (`npx prisma migrate deploy`)
-- [ ] 验证端到端: 创建 content → 审核 → 创建 job → 客户端注册 → 拉取队列 → 回传状态
-
----
-
-## 紧急回滚
-
-- 数据库: RDS 快照 + 时间点恢复（PITR）
-- 代码: ECS 强制新部署回滚到上一镜像标签
-- 配置: Secrets Manager 版本历史恢复
-- 网络: Tailscale ACL 规则秒级生效，可立即切断中国团队访问
+**Document Status**: Final  
+**Owner**: @研发 (Tech Lead)  
+**Review Date**: 2026-09-04

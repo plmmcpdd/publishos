@@ -1,501 +1,600 @@
-# API 契约 v1.0 — 发布网关
-> 版本: 1.0 | 状态: 定版 | 适用: 外部开发团队（Codex/人类）
+# PublishOS — API Contract v1.0
+
+## 版本信息
+- **Version**: 1.0
+- **Date**: 2026-06-04
+- **Author**: @研发 (Tech Lead)
+- **Status**: Final
+
+## 设计原则
+
+1. **Device-Task Token Separation**: 客户端用 `device_token` 拉取队列，用 `task_token` 回传单条任务状态。`task_token` 是一次性的。
+2. **Account Binding Isolation**: 一个客户可能有多个平台账号，通过 `account_binding_id` 隔离。
+3. **S3 Presigned URLs**: 媒体文件通过 15 分钟过期的预签名 URL 下发，客户端无需 AWS 凭证。
+4. **Compliance Gateway**: 所有内容必须经美国运营审核后才能进入客户端队列。
+5. **Zero Knowledge Credentials**: 客户账号密码/API Token 不存储在服务器，由客户端本地浏览器管理。
+
+## 认证
+
+### Device Token
+- 客户端 App 注册设备时获取，长期有效（可手动刷新）
+- 用于：拉取队列 (`GET /v1/queue`)、获取设备配置、心跳
+- 存储在客户端本地，Electron 的 `localStorage` 或 `keytar`
+
+```json
+Headers: Authorization: Bearer {device_token}
+```
+
+### Task Token
+- 服务端在任务下发时生成，一次性使用
+- 用于：回传任务状态 (`POST /v1/tasks/:id/status`)
+- 任务完成后失效，不可复用
+
+```json
+Headers: Authorization: Bearer {task_token}
+```
+
+### 运营 Token
+- 运营人员登录后台获取，JWT 格式，24 小时过期
+- 用于：内容审核、查看审计日志、管理客户
+
+```json
+Headers: Authorization: Bearer {jwt_token}
+```
 
 ---
 
-## 变更日志
+## 接口列表
 
-| 版本 | 日期 | 变更 |
-|------|------|------|
-| v0.1 | 2026-06-04 | 初稿，含内容/发布/客户端/审计核心接口 |
-| v1.0 | 2026-06-04 | **纳入 4 项安全补漏**: ① account_binding_id 隔离 ② device_token/task_token 分离 ③ 审核网关 /approve /reject ④ S3 预签名 URL 15 分钟过期 |
+### 1. Content Management (中国团队)
 
----
-
-## 认证体系
-
-### 三种 JWT Token
-
-所有接口通过 `Authorization: Bearer <token>` 认证。Token 共用同一个 `JWT_SECRET` 签名，但 `payload.type` 字段区分用途。
-
-| Token 类型 | payload | 用途 | 有效期 | 获取方式 |
-|------------|---------|------|--------|----------|
-| **user** | `{ type: "user", id: "user_001", role: "admin" }` | 运营团队操作 | 24h | 内部 IAM 系统签发 |
-| **device** | `{ type: "device", device_id: "mac_001", client_id: "client_abc", capabilities: ["tiktok_web"] }` | 客户端 App 轮询队列 | 7d | `POST /v1/client/register` |
-| **task** | `{ type: "task", job_id: "job_xyz", device_id: "mac_001" }` | 客户端回传单条任务状态 | 24h | 任务下发时由网关生成，随队列返回 |
-
-### 安全规则
-
-- **Task Token 只能操作指定 job。** 中间件验证 `payload.job_id === req.params.id`，不匹配返回 403。
-- **Device Token 绑定硬件。** `device_id` 由客户端 App 在首次运行时生成（基于硬件指纹 + 随机 salt），不可篡改。
-- **Task Token 不能拉取队列。** 用 task token 调用 `GET /v1/client/queue` 返回 403。
-
----
-
-## 1. 内容管理 (Content)
-
-### POST /v1/content
-**中国交付团队**创建内容。素材授权链不完整时直接 422 阻断。
-
-**Headers:** `Authorization: Bearer {user_token}`
+#### POST /v1/contents
+创建内容，由中国内容团队调用。
 
 **Request Body:**
 ```json
 {
-  "client_id": "client_abc123",
-  "title": "HVAC Tips for Summer",
-  "description": "Full script or content brief",
-  "caption": "Beat the heat... #hvac #summer",
-  "hashtags": ["hvac", "summer", "airconditioning"],
-  "video_url": "https://s3.amazonaws.com/.../video.mp4",
-  "thumbnail_url": "https://s3.amazonaws.com/.../thumb.jpg",
-  "ai_generated": true,
-  "ai_tools": ["runway", "gpt4"],
-  "platforms": ["tiktok", "instagram", "facebook"],
-  "schedule_at": "2026-06-15T14:00:00Z",
-  "metadata": {
-    "industry": "hvac",
-    "campaign": "summer_2026",
-    "content_type": "educational"
-  },
-  "assets": [
+  "client_id": "client_123",
+  "title": "Summer HVAC Tune-Up Tips",
+  "description": "Keep your AC running all summer with these 3 tips...",
+  "media": [
     {
-      "type": "stock_video",
-      "source": "envato",
-      "license_id": "env_789",
-      "url": "https://s3.amazonaws.com/.../clip.mp4",
-      "authorization_doc_url": "https://s3.amazonaws.com/.../auth.pdf",
-      "description": "AC unit b-roll footage"
-    },
-    {
-      "type": "client_owned",
-      "source": "client_direct",
-      "url": "https://s3.amazonaws.com/.../onsite.mp4",
-      "description": "Customer's service team photo"
+      "type": "video",
+      "storage_key": "media/videos/hvac_summer_01.mp4",
+      "license_ref": "envato_video_12345"
     }
-  ]
+  ],
+  "ai_generated": true,
+  "ai_disclosure": {
+    "platform": "tiktok",
+    "label": "ai-generated"
+  },
+  "platforms": ["tiktok"],
+  "scheduled_at": "2026-06-06T15:00:00-04:00",
+  "license_chain": [
+    {
+      "source": "envato",
+      "id": "video_12345",
+      "license_type": "elements_business",
+      "subscription_id": "sub_abc",
+      "expires_at": "2026-12-31"
+    }
+  ],
+  "tags": ["hvac", "summer", "maintenance"],
+  "target_hashtags": ["#HVAC", "#SummerTips", "#HomeMaintenance"]
 }
 ```
 
-**422 阻断示例（素材缺授权）:**
-```json
-{
-  "error": "License reference required for stock assets",
-  "assets": ["https://s3.amazonaws.com/.../clip.mp4"]
-}
-```
-
-**Response 201:**
+**Response (201):**
 ```json
 {
   "content_id": "cnt_abc123",
   "status": "pending_review",
-  "created_at": "2026-06-10T09:00:00Z",
+  "created_at": "2026-06-04T10:00:00Z",
+  "license_status": "valid",
   "compliance_check": {
-    "status": "pending",
-    "checks": ["copyright", "ai_disclosure", "platform_policy"]
+    "ai_label_missing": false,
+    "license_missing": false,
+    "high_risk_ad_copy": false
+  }
+}
+```
+
+**Error (422):**
+```json
+{
+  "error": "compliance_violation",
+  "message": "License chain incomplete for media[0]",
+  "details": {
+    "license_status": "missing",
+    "media_index": 0
   }
 }
 ```
 
 ---
 
-### GET /v1/content
-运营后台列表查询。
+#### GET /v1/contents
+查询内容列表，运营后台使用。
 
 **Query Parameters:**
-- `status` — `pending_review` | `rejected` | `approved` | `published` | `failed`
-- `client_id` — 客户过滤
+- `status`: `pending_review` | `approved` | `rejected` | `published` | `blocked_compliance`
+- `client_id`: 筛选特定客户
+- `from`: ISO 8601 开始时间
+- `to`: ISO 8601 结束时间
+- `limit`: 默认 20，最大 100
+- `offset`: 分页偏移
 
-**Response:**
-```json
-{
-  "data": [
-    {
-      "id": "cnt_abc123",
-      "clientId": "client_abc123",
-      "title": "...",
-      "status": "approved",
-      "assets": [...],
-      "publishJobs": [
-        {
-          "id": "job_xyz789",
-          "platform": "tiktok",
-          "status": "dispatched",
-          "accountBinding": { "platform": "tiktok", "accountUsername": "@acme_hvac" }
-        }
-      ]
-    }
-  ]
-}
-```
-
----
-
-### GET /v1/content/:id
-内容详情。
-
----
-
-### POST /v1/content/:id/approve
-**美国运营团队**审核通过。通过后才能创建发布任务。
-
-**Request Body:**
-```json
-{ "notes": "Copyright clear, AI labels confirmed" }
-```
-
----
-
-### POST /v1/content/:id/reject
-审核拒绝。
-
-**Request Body:**
-```json
-{
-  "reason": "copyright_risk",
-  "detail": "Asset env_789 license does not cover sub-licensing to client"
-}
-```
-
----
-
-## 2. 发布任务 (PublishJob)
-
-### POST /v1/publish-jobs
-为**已审核通过**的内容创建发布任务。自动调度（5 分钟内执行的立即 dispatch）。
-
-**Headers:** `Authorization: Bearer {user_token}`
-
-**Request Body:**
-```json
-{
-  "content_id": "cnt_abc123",
-  "account_binding_id": "bind_tiktok_acme_001",
-  "platform": "tiktok",
-  "schedule_at": "2026-06-15T14:00:00Z",
-  "publish_options": {
-    "privacy": "public",
-    "allow_comments": true,
-    "allow_duet": false,
-    "allow_stitch": false,
-    "ai_generated_label": true
-  }
-}
-```
-
-**Response 201:**
-```json
-{
-  "job_id": "job_xyz789",
-  "status": "dispatched",
-  "content_id": "cnt_abc123",
-  "platform": "tiktok",
-  "account_binding_id": "bind_tiktok_acme_001",
-  "created_at": "2026-06-10T09:05:00Z"
-}
-```
-
-**错误码:**
-- `422` — content 未 approved
-- `422` — account_binding 平台与请求 platform 不匹配
-- `404` — content_id 或 account_binding_id 不存在
-
----
-
-### GET /v1/publish-jobs
-列表查询。支持 `status`, `content_id`, `platform` 筛选。
-
----
-
-### POST /v1/publish-jobs/:id/cancel
-取消未执行的任务。已 published/failed 的不可取消。
-
----
-
-## 3. 客户端接口 (Client App)
-
-### POST /v1/client/register
-Electron 客户端首次运行时注册，获取 `device_token`。
-
-**Request Body:**
-```json
-{
-  "device_id": "mac_001_abc123",    // 硬件指纹 + 随机 salt
-  "client_id": "client_abc123",
-  "capabilities": ["tiktok_web", "instagram_web"]
-}
-```
-
-**Response:**
-```json
-{
-  "device_token": "eyJhbGc...",
-  "device_id": "mac_001_abc123",
-  "expires_at": "2026-06-17T09:00:00Z"
-}
-```
-
----
-
-### GET /v1/client/queue
-客户端轮询拉取待发布任务。**这是核心接口**，每次返回 ≤10 条 `dispatched` 状态的任务。
-
-**Headers:** `Authorization: Bearer {device_token}`
-
-**Query:** `?device_id=mac_001_abc123&client_version=1.0.0`
-
-**Response:**
-```json
-{
-  "device_id": "mac_001_abc123",
-  "queue": [
-    {
-      "job_id": "job_xyz789",
-      "job_token": "eyJhbGc...",           // ← 一次性回传凭证
-      "content_id": "cnt_abc123",
-      "title": "HVAC Tips for Summer",
-      "description": "Full script...",
-      "caption": "Beat the heat...",
-      "media_url": "https://s3-presigned-15min.../video.mp4",
-      "thumbnail_url": "https://s3-presigned-15min.../thumb.jpg",
-      "platform": "tiktok",
-      "publish_config": {
-        "ai_generated_label": true,
-        "privacy": "public",
-        "allow_comments": true,
-        "allow_duet": false
-      },
-      "account_binding_id": "bind_tiktok_acme_001",
-      "account_username": "@acme_hvac",
-      "scheduled_at": "2026-06-15T14:00:00Z",
-      "deadline": "2026-06-15T14:30:00Z"     // 30 分钟 grace period
-    }
-  ]
-}
-```
-
-**关键设计:**
-- `media_url` 是 **15 分钟过期的 S3 预签名 URL**。客户端必须在有效期内下载视频，否则重新轮询获取新 URL。
-- `job_token` 只能用于 `POST /v1/tasks/:job_id/status`，不能用于拉取队列或其他操作。
-- 每次轮询时网关自动刷新 `Device.lastSeen` 和 `online` 状态。
-
----
-
-### POST /v1/client/heartbeat
-客户端心跳，每 30-60 秒上报一次。
-
-**Headers:** `Authorization: Bearer {device_token}`
-
-**Request Body:**
-```json
-{
-  "status": "online",
-  "capabilities": ["tiktok_web", "instagram_web"],
-  "active_sessions": {
-    "tiktok": { "logged_in": true, "session_age_hours": 48 },
-    "instagram": { "logged_in": false }
-  }
-}
-```
-
----
-
-## 4. 状态回传 (Status Callback)
-
-### POST /v1/tasks/:id/status
-客户端完成（或失败）发布后回传。**必须用 task_token。**
-
-**Headers:** `Authorization: Bearer {task_token}`
-
-**Request Body (成功):**
-```json
-{
-  "status": "published",
-  "platform_post_id": "7435925695869501496",
-  "platform_post_url": "https://www.tiktok.com/@acme_hvac/video/7435925695869501496",
-  "published_at": "2026-06-15T14:03:22Z",
-  "device_fingerprint": {
-    "os": "macos_14.5",
-    "browser": "chrome_124",
-    "ip_geo": "US-NY"
-  },
-  "screenshot_url": "https://s3.amazonaws.com/.../screenshot.png"
-}
-```
-
-**Request Body (失败):**
-```json
-{
-  "status": "failed",
-  "error": {
-    "code": "tiktok_login_required",
-    "message": "Session expired, login page detected at /upload",
-    "retryable": true
-  },
-  "device_fingerprint": {
-    "os": "macos_14.5",
-    "browser": "chrome_124"
-  }
-}
-```
-
-**Error Codes (标准化):**
-| Code | 含义 | retryable | 处理建议 |
-|------|------|-----------|----------|
-| `tiktok_login_required` | 登录态过期 | true | 客户端托盘弹窗，通知客户重新登录 |
-| `tiktok_captcha_triggered` | 触发验证码 | false | 人工介入，手动完成上传 |
-| `tiktok_upload_blocked` | 上传接口被风控拦截 | false | 暂停该账号 24h，检查 shadowban |
-| `network_error` | 客户端网络异常 | true | 自动重试，指数退避 |
-| `file_download_failed` | S3 预签名 URL 过期或下载失败 | true | 重新轮询队列获取新 URL |
-| `platform_api_error` | 平台返回非预期错误 | 视情况 | 记录日志，运营人工排查 |
-
-**Response:**
-```json
-{
-  "job_id": "job_xyz789",
-  "status": "published",
-  "content_id": "cnt_abc123",
-  "platform": "tiktok",
-  "updated_at": "2026-06-15T14:03:25Z"
-}
-```
-
----
-
-## 5. 账号绑定 (AccountBinding)
-
-### POST /v1/account-bindings
-绑定客户社交账号。密码**不存储**在服务器，仅标记由客户端 App 管理登录态。
-
-**Request Body:**
-```json
-{
-  "client_id": "client_abc123",
-  "platform": "tiktok",
-  "account_username": "@acme_hvac",
-  "credentials": {
-    "type": "client_app_managed",
-    "notes": "Customer logs in via Electron App, session stored locally"
-  },
-  "business_location": {
-    "country": "US",
-    "state": "NY",
-    "city": "Buffalo"
-  },
-  "active": true
-}
-```
-
----
-
-### GET /v1/account-bindings/:id/health
-查询账号健康状态，供 Dashboard 展示。
-
-**Response:**
-```json
-{
-  "binding_id": "bind_tiktok_acme_001",
-  "status": "active",
-  "last_publish": "2026-06-14T10:00:00Z",
-  "health_score": 95,
-  "warnings": [],
-  "client_session": {
-    "device_id": "mac_001_abc123",
-    "last_seen": "2026-06-15T13:50:00Z",
-    "session_valid": true
-  }
-}
-```
-
----
-
-## 6. 审计 (Audit)
-
-### GET /v1/audit
-审计日志查询。支持 `action`, `target_type`, `from`, `to` 筛选。
-
----
-
-### GET /v1/audit/publish-summary
-发布统计看板数据。
-
-**Response:**
+**Response (200):**
 ```json
 {
   "total": 156,
-  "by_status": { "published": 140, "failed": 12, "cancelled": 4 },
-  "by_platform": {
-    "tiktok": { "total": 80, "success": 72, "failed": 8 },
-    "instagram": { "total": 76, "success": 68, "failed": 4 }
-  },
-  "errors": {
-    "tiktok_login_required": 5,
-    "tiktok_upload_blocked": 3,
-    "network_error": 4
-  }
+  "items": [
+    {
+      "content_id": "cnt_abc123",
+      "client_id": "client_123",
+      "client_name": "Joe's HVAC",
+      "title": "Summer HVAC Tune-Up Tips",
+      "status": "pending_review",
+      "ai_generated": true,
+      "license_status": "valid",
+      "created_at": "2026-06-04T10:00:00Z",
+      "scheduled_at": "2026-06-06T15:00:00-04:00"
+    }
+  ]
 }
 ```
 
 ---
 
-## 数据模型关系图
+#### GET /v1/contents/:content_id
+获取单条内容详情。
 
-```
-┌─────────────┐     ┌──────────────────┐     ┌─────────────┐
-│   Client    │────<│ AccountBinding (N) │────<│ PublishJob  │
-│  (客户)     │     │ (平台账号绑定)      │     │ (发布任务)   │
-└─────────────┘     └──────────────────┘     └─────────────┘
-       │                                          │
-       │                                          │
-       │                    ┌─────────────┐       │
-       └───────────────────<│   Content   │───────┘
-                            │  (内容)      │
-                            └─────────────┘
-                                   │
-                                   │
-                            ┌─────────────┐
-                            │ContentAsset │
-                            │ (素材授权)   │
-                            └─────────────┘
-```
-
----
-
-## 状态机
-
-### Content 状态
-```
-pending_review → approved → [PublishJob created] → published
-     ↓ rejected              ↓ failed
-```
-
-### PublishJob 状态
-```
-pending → dispatched → client_confirmed → publishing → published
-   ↓         ↓               ↓
-cancelled  (timeout)      failed
+**Response (200):**
+```json
+{
+  "content_id": "cnt_abc123",
+  "client_id": "client_123",
+  "title": "Summer HVAC Tune-Up Tips",
+  "description": "...",
+  "media": [...],
+  "ai_generated": true,
+  "ai_disclosure": { "platform": "tiktok", "label": "ai-generated" },
+  "platforms": ["tiktok"],
+  "scheduled_at": "...",
+  "license_chain": [...],
+  "status": "pending_review",
+  "compliance_check": { ... },
+  "audit_log": [
+    {
+      "action": "created",
+      "actor": "team_cn_user_1",
+      "timestamp": "2026-06-04T10:00:00Z"
+    }
+  ]
+}
 ```
 
 ---
 
-## 外部团队接入 Checklist
+### 2. Content Approval (美国运营)
 
-- [ ] 替换 `generatePresignedUrl()` 为 AWS SDK `getSignedUrl`
-- [ ] 配置 `JWT_SECRET` 环境变量（≥32 字符，生产环境用 AWS Secrets Manager）
-- [ ] 配置 `DATABASE_URL` 指向 AWS RDS PostgreSQL
-- [ ] 配置 `S3_BUCKET` 和 AWS IAM 凭证
-- [ ] 添加 rate limiting（建议: device_token 100 req/15min, user_token 1000 req/15min）
-- [ ] 添加 structured logging（Pino）替代 console.log
-- [ ] 部署到 AWS ECS/Fargate 或 EC2（US-East-1）
-- [ ] 配置 Tailscale 或 AWS Client VPN 让中国团队访问内容创建 API
-- [ ] 设置数据库自动备份（RDS 7 天保留）
+#### POST /v1/contents/:content_id/approve
+审核通过内容。运营调用。
+
+**Request Body:** (optional)
+```json
+{
+  "notes": "Looks good, AI label correct, license valid."
+}
+```
+
+**Response (200):**
+```json
+{
+  "content_id": "cnt_abc123",
+  "status": "approved",
+  "approved_at": "2026-06-04T11:30:00Z",
+  "approved_by": "operator_us_1",
+  "notes": "Looks good..."
+}
+```
+
+**Error (403):** 运营 Token 权限不足。
+
+**Error (409):** 内容状态不是 `pending_review`。
+
+**Error (422):** `license_status` 为 `missing` 或授权已过期，Approve 被禁用。
 
 ---
 
-## 待外部团队确认
+#### POST /v1/contents/:content_id/reject
+审核驳回内容。运营调用。
 
-1. **TikTok web 端 AI 标签 DOM selector** — 需要真实账号登录后检测 `data-e2e="ai-generated-toggle"` 或类似字段的确切路径
-2. **Instagram Graph API 的 `is_ai_generated` 字段** — Meta 文档声称支持，需要真实 API 调用验证
-3. **X API v2 媒体上传 + 标签流程** — 确认 `media_upload` → `post tweet` 时是否能在 metadata 中标记 AI 生成
-4. **S3 预签名 URL 在客户端的下载策略** — 视频文件可能 50-100MB，是否需要分片下载或断点续传
+**Request Body:**
+```json
+{
+  "reason": "License chain incomplete for BGM",
+  "reason_code": "license_missing",
+  "suggested_fix": "Replace with Envato Elements track #music_6789"
+}
+```
+
+**Response (200):**
+```json
+{
+  "content_id": "cnt_abc123",
+  "status": "rejected",
+  "rejected_at": "2026-06-04T11:30:00Z",
+  "rejected_by": "operator_us_1",
+  "reason": "License chain incomplete for BGM",
+  "reason_code": "license_missing"
+}
+```
+
+**Reason Codes:**
+- `license_missing`: 素材授权缺失
+- `ai_label_missing`: AI 披露标签不正确
+- `high_risk_ad_copy`: 广告文案含高风险用语
+- `copyright_concern`: 版权风险
+- `quality_issue`: 内容质量不达标
+- `schedule_conflict`: 发布时间冲突
+- `other`: 其他原因
+
+---
+
+### 3. Publish Jobs (发布任务)
+
+#### POST /v1/publish-jobs
+为已审核通过的内容创建发布任务。由系统自动或运营手动触发。
+
+**Request Body:**
+```json
+{
+  "content_id": "cnt_abc123",
+  "account_binding_id": "bind_tiktok_joes_hvac",
+  "platform": "tiktok",
+  "publish_config": {
+    "privacy": "public",
+    "allow_comments": true,
+    "allow_duet": true,
+    "allow_stitch": false,
+    "ai_label": "ai-generated"
+  },
+  "scheduled_at": "2026-06-06T15:00:00-04:00"
+}
+```
+
+**Response (201):**
+```json
+{
+  "job_id": "job_xyz789",
+  "content_id": "cnt_abc123",
+  "status": "queued",
+  "account_binding_id": "bind_tiktok_joes_hvac",
+  "platform": "tiktok",
+  "created_at": "2026-06-04T12:00:00Z"
+}
+```
+
+---
+
+#### GET /v1/publish-jobs
+查询发布任务列表。
+
+**Query Parameters:**
+- `status`: `queued` | `pending_client` | `publishing` | `published` | `failed` | `cancelled`
+- `client_id`
+- `account_binding_id`
+- `limit`, `offset`
+
+**Response (200):** 同 `GET /v1/contents` 格式，items 为 publish job 对象。
+
+---
+
+### 4. Client Queue (客户端 App)
+
+#### POST /v1/client/register
+客户端 App 首次启动时注册设备。
+
+**Request Body:**
+```json
+{
+  "client_id": "client_123",
+  "device_name": "Joe's MacBook Pro",
+  "device_type": "macos",
+  "device_fingerprint": "sha256_hash_of_hardware_info"
+}
+```
+
+**Response (201):**
+```json
+{
+  "device_id": "dev_001",
+  "device_token": "dtk_...",
+  "client_id": "client_123",
+  "expires_at": "2027-06-04T10:00:00Z"
+}
+```
+
+---
+
+#### GET /v1/queue
+客户端拉取待发布任务队列。
+
+**Headers:** `Authorization: Bearer {device_token}`
+
+**Query Parameters:**
+- `limit`: 默认 10
+
+**Response (200):**
+```json
+{
+  "items": [
+    {
+      "task_id": "task_001",
+      "job_id": "job_xyz789",
+      "content_id": "cnt_abc123",
+      "account_binding_id": "bind_tiktok_joes_hvac",
+      "title": "Summer HVAC Tune-Up Tips",
+      "description": "Keep your AC running...",
+      "media_url": "https://s3.amazonaws.com/.../video.mp4?X-Amz-Signature=...&X-Amz-Expires=900",
+      "media_type": "video",
+      "platform": "tiktok",
+      "ai_label_required": "ai-generated",
+      "publish_config": {
+        "privacy": "public",
+        "allow_comments": true,
+        "allow_duet": true,
+        "allow_stitch": false
+      },
+      "scheduled_at": "2026-06-06T15:00:00-04:00",
+      "task_token": "ttk_..."
+    }
+  ]
+}
+```
+
+**Note:** `media_url` 是 S3 预签名 URL，15 分钟后过期。客户端必须在有效期内下载。
+
+---
+
+#### POST /v1/client/heartbeat
+客户端心跳，保持设备在线状态。
+
+**Headers:** `Authorization: Bearer {device_token}`
+
+**Request Body:**
+```json
+{
+  "device_status": "online",
+  "browser_ready": true,
+  "last_error": null
+}
+```
+
+**Response (200):**
+```json
+{
+  "server_time": "2026-06-04T10:00:00Z",
+  "config_version": "1.0",
+  "force_refresh": false
+}
+```
+
+---
+
+### 5. Task Status (客户端回传)
+
+#### POST /v1/tasks/:task_id/status
+客户端上报任务状态。使用 `task_token` 认证。
+
+**Headers:** `Authorization: Bearer {task_token}`
+
+**Request Body:**
+```json
+{
+  "status": "published",
+  "published_at": "2026-06-06T15:02:00-04:00",
+  "platform_post_id": "tiktok_1234567890",
+  "error": null,
+  "device_fingerprint": "sha256_hash",
+  "browser_info": {
+    "user_agent": "Mozilla/5.0...",
+    "platform": "macos",
+    "version": "14.0"
+  }
+}
+```
+
+**Status Values:**
+- `published`: 发布成功
+- `failed`: 发布失败
+- `cancelled`: 用户取消
+- `timeout`: 客户端超时未响应
+
+**Error Object (for failed):**
+```json
+{
+  "code": "browser_error",
+  "message": "TikTok upload page timed out",
+  "stack": "optional",
+  "retryable": true
+}
+```
+
+**Response (200):**
+```json
+{
+  "task_id": "task_001",
+  "status": "published",
+  "acknowledged_at": "2026-06-06T15:02:05Z"
+}
+```
+
+**Error (401):** `task_token` 无效或已使用。
+
+**Error (403):** `task_token` 与 `task_id` 不匹配。
+
+---
+
+### 6. Audit (审计日志)
+
+#### GET /v1/audit
+查询审计日志。运营后台和系统管理员使用。
+
+**Headers:** `Authorization: Bearer {jwt_token}`
+
+**Query Parameters:**
+- `client_id`
+- `content_id`
+- `task_id`
+- `actor_id`
+- `action`: `created` | `approved` | `rejected` | `published` | `failed` | `cancelled`
+- `from`, `to`
+- `limit`, `offset`
+
+**Response (200):**
+```json
+{
+  "total": 1024,
+  "items": [
+    {
+      "audit_id": "aud_001",
+      "action": "published",
+      "actor": "client_device_001",
+      "actor_type": "device",
+      "target_type": "task",
+      "target_id": "task_001",
+      "timestamp": "2026-06-06T15:02:00Z",
+      "details": {
+        "platform": "tiktok",
+        "platform_post_id": "tiktok_1234567890",
+        "ai_label_applied": true,
+        "license_refs": ["envato_video_12345"]
+      },
+      "device_fingerprint": "sha256_hash",
+      "ip_address": "xxx.xxx.xxx.xxx"
+    }
+  ]
+}
+```
+
+---
+
+### 7. Dashboard Metrics (运营数据)
+
+#### GET /v1/metrics/dashboard
+运营后台实时指标。
+
+**Headers:** `Authorization: Bearer {jwt_token}`
+
+**Response (200):**
+```json
+{
+  "today": {
+    "publish_success_rate": 0.94,
+    "publish_count": 12,
+    "pending_review_count": 3,
+    "pending_client_count": 5
+  },
+  "last_7_days": {
+    "publish_success_rate": 0.91,
+    "total_published": 89
+  },
+  "health_alerts": [
+    {
+      "client_id": "client_456",
+      "client_name": "CoolAir Systems",
+      "alert_type": "shadowban_suspected",
+      "severity": "high",
+      "detected_at": "2026-06-04T08:00:00Z",
+      "details": "Last 3 posts not appearing in hashtag search results"
+    }
+  ]
+}
+```
+
+---
+
+### 8. Account Health (账号健康)
+
+#### GET /v1/account-bindings/:id/health
+查询账号健康状态。
+
+**Headers:** `Authorization: Bearer {jwt_token}`
+
+**Response (200):**
+```json
+{
+  "account_binding_id": "bind_tiktok_joes_hvac",
+  "client_id": "client_123",
+  "platform": "tiktok",
+  "handle": "@joes_hvac_ri",
+  "health_score": 87,
+  "status": "healthy",
+  "last_checked": "2026-06-04T09:00:00Z",
+  "metrics": {
+    "publish_success_rate_7d": 0.95,
+    "post_visibility": "normal",
+    "follower_growth_rate": "normal",
+    "login_status": "valid"
+  },
+  "alerts": []
+}
+```
+
+---
+
+## 错误响应规范
+
+所有错误响应遵循统一格式：
+
+```json
+{
+  "error": "error_code_snake_case",
+  "message": "Human readable description",
+  "details": {},
+  "request_id": "req_xxx"
+}
+```
+
+**HTTP Status Codes:**
+
+| Status | Meaning | When |
+|--------|---------|------|
+| 200 | OK | Success |
+| 201 | Created | Resource created |
+| 400 | Bad Request | Request body malformed |
+| 401 | Unauthorized | Token missing or invalid |
+| 403 | Forbidden | Token valid but permission denied |
+| 404 | Not Found | Resource doesn't exist |
+| 409 | Conflict | Resource state conflict (e.g., already approved) |
+| 422 | Unprocessable | Business logic violation (e.g., license missing) |
+| 429 | Too Many Requests | Rate limit exceeded |
+| 500 | Server Error | Internal server error |
+
+---
+
+## 数据模型
+
+详见 `prisma/schema.prisma` (后端参考实现)。
+
+核心表：
+- `Content` — 内容主表
+- `ContentMedia` — 内容媒体关联
+- `LicenseChain` — 素材授权链
+- `PublishJob` — 发布任务
+- `PublishTask` — 客户端任务实例
+- `Client` — 客户
+- `AccountBinding` — 平台账号绑定
+- `AuditLog` — 审计日志
+- `Device` — 客户端设备注册
+
+## 版本历史
+
+| Version | Date | Changes |
+|---------|------|---------|
+| 0.1 | 2026-06-04 | Initial draft |
+| 1.0 | 2026-06-04 | Added 4 security patches: account_binding_id, device/task token separation, approval gateway, S3 presigned URLs |
+
