@@ -1,16 +1,23 @@
-import { Outlet, Link, useLocation } from 'react-router-dom';
+import { Link, Outlet, useLocation } from 'react-router-dom';
 
 const navItems = [
   { path: '/', label: '概览', icon: '01' },
   { path: '/review', label: '审核流', icon: '02' },
   { path: '/contents', label: '内容管理', icon: '03' },
   { path: '/customers', label: '客户列表', icon: '04' },
-  { path: '/settings', label: '设置', icon: '05' },
+  { path: '/monitor', label: '系统监控', icon: '05' },
+  { path: '/audit', label: '审计日志', icon: '06' },
+  { path: '/settings', label: '设置', icon: '07' },
 ];
 
 export default function Layout() {
   const location = useLocation();
   const activeLabel = navItems.find((item) => item.path === location.pathname)?.label || '概览';
+
+  const logout = () => {
+    localStorage.removeItem('dashboard_auth');
+    window.location.reload();
+  };
 
   return (
     <div className="flex h-screen">
@@ -33,7 +40,12 @@ export default function Layout() {
             </Link>
           ))}
         </nav>
-        <div className="p-4 text-xs opacity-50">PublishOS Dashboard v0.1.0</div>
+        <div className="p-4">
+          <button type="button" onClick={logout} className="px-4 py-2 text-sm opacity-70 hover:opacity-100">
+            退出登录
+          </button>
+          <div className="mt-3 text-xs opacity-50">PublishOS Dashboard v0.1.0</div>
+        </div>
       </aside>
 
       <main className="flex-1 overflow-auto">

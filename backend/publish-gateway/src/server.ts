@@ -8,6 +8,8 @@ import clientRoutes from './routes/client';
 import taskRoutes from './routes/tasks';
 import auditRoutes from './routes/audit';
 import apiContentRoutes from './routes/api-contents';
+import statsRoutes from './routes/stats';
+import auditLogRoutes from './routes/audit-logs';
 import { languageMiddleware } from './middleware/language';
 
 dotenv.config();
@@ -32,6 +34,8 @@ app.use('/v1/client', clientRoutes);
 app.use('/v1/tasks', taskRoutes);
 app.use('/v1/audit', auditRoutes);
 app.use('/api/v1/contents', apiContentRoutes);
+app.use('/api/v1/stats', statsRoutes);
+app.use('/api/v1/audit-logs', auditLogRoutes);
 
 // 404 handler
 app.use((_req, res) => {

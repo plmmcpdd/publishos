@@ -24,10 +24,13 @@ function firstPlatform(value?: string) {
 function statusFilter(status?: string) {
   if (!status) return undefined;
   const requested = status.split(',').map((item) => item.trim()).filter(Boolean);
-  if (requested.includes('queued')) {
-    return { in: ['pending_review', 'approved'] as const };
-  }
-  return { in: requested as any };
+  const mapped = requested.flatMap((item) => {
+    if (item === 'queued') return ['pending_review', 'approved'];
+    if (item === 'pending') return ['pending_review'];
+    return [item];
+  });
+
+  return { in: [...new Set(mapped)] as any };
 }
 
 router.get('/', async (req, res) => {
@@ -48,6 +51,62 @@ router.post('/:id/publish', async (req, res) => {
     const content = await prisma.content.update({
       where: { id: req.params.id },
       data: { status: 'published' },
+    });
+
+    await prisma.auditLog.create({
+      data: {
+        action: 'publish',
+        actorId: 'dashboard',
+        actorType: 'user',
+        targetType: 'content',
+        targetId: content.id,
+      },
+    });
+
+    res.json({ data: serializeContent(content) });
+  } catch {
+    res.status(404).json({ error: res.locals.t('errors.contentNotFound') });
+  }
+});
+
+router.post('/:id/approve', async (req, res) => {
+  try {
+    const content = await prisma.content.update({
+      where: { id: req.params.id },
+      data: { status: 'approved' },
+    });
+
+    await prisma.auditLog.create({
+      data: {
+        action: 'approve',
+        actorId: 'dashboard',
+        actorType: 'user',
+        targetType: 'content',
+        targetId: content.id,
+      },
+    });
+
+    res.json({ data: serializeContent(content) });
+  } catch {
+    res.status(404).json({ error: res.locals.t('errors.contentNotFound') });
+  }
+});
+
+router.post('/:id/reject', async (req, res) => {
+  try {
+    const content = await prisma.content.update({
+      where: { id: req.params.id },
+      data: { status: 'rejected' },
+    });
+
+    await prisma.auditLog.create({
+      data: {
+        action: 'reject',
+        actorId: 'dashboard',
+        actorType: 'user',
+        targetType: 'content',
+        targetId: content.id,
+      },
     });
 
     res.json({ data: serializeContent(content) });
