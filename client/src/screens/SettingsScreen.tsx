@@ -48,12 +48,12 @@ export default function SettingsScreen() {
   };
 
   const changeLang = (lang: string) => {
-    i18n.changeLanguage(lang);
+    localStorage.setItem('publishos.language', lang);
+    void i18n.changeLanguage(lang);
   };
 
   return (
     <div className="content-area">
-      {/* Top Bar */}
       <div className="topbar">
         <div className="topbar-title">{t('settings.title')}</div>
         <div className="topbar-badge">
@@ -62,13 +62,11 @@ export default function SettingsScreen() {
         </div>
       </div>
 
-      {/* Screen Header */}
       <div className="screen-header">
         <h2>{t('settings.heading')}</h2>
-        <p>Manage accounts and preferences</p>
+        <p>{t('settings.subtitle')}</p>
       </div>
 
-      {/* Accounts */}
       <div className="section-label">{t('settings.account')}</div>
       {accounts.map((acc) => (
         <div key={acc.id} className="account-card">
@@ -85,33 +83,32 @@ export default function SettingsScreen() {
             className={`btn ${acc.connected ? 'btn-secondary' : 'btn-primary'}`}
             onClick={() => toggleAccount(acc.id)}
           >
-            {acc.connected ? 'Disconnect' : 'Connect'}
+            {acc.connected ? t('settings.disconnect') : t('settings.connect')}
           </button>
         </div>
       ))}
 
-      {/* Preferences */}
-      <div className="section-label" style={{ marginTop: 8 }}>Preferences</div>
+      <div className="section-label" style={{ marginTop: 8 }}>{t('settings.preferences')}</div>
 
       <div className="card" style={{ margin: '0 16px 14px' }}>
         <div className="setting-row">
           <div>
-            <div className="setting-label">System Tray Notifications</div>
-            <div className="setting-desc">Show toast when new jobs arrive</div>
+            <div className="setting-label">{t('settings.systemTrayNotifications')}</div>
+            <div className="setting-desc">{t('settings.systemTrayNotificationsDesc')}</div>
           </div>
           <Toggle checked={notify} onChange={setNotify} />
         </div>
         <div className="setting-row">
           <div>
-            <div className="setting-label">Launch at Login</div>
-            <div className="setting-desc">Start PublishOS when Windows boots</div>
+            <div className="setting-label">{t('settings.launchAtLogin')}</div>
+            <div className="setting-desc">{t('settings.launchAtLoginDesc')}</div>
           </div>
           <Toggle checked={launchAtLogin} onChange={setLaunchAtLogin} />
         </div>
         <div className="setting-row">
           <div>
-            <div className="setting-label">Language</div>
-            <div className="setting-desc">Interface language</div>
+            <div className="setting-label">{t('settings.language')}</div>
+            <div className="setting-desc">{t('settings.languageDesc')}</div>
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
             <button
@@ -119,14 +116,14 @@ export default function SettingsScreen() {
               onClick={() => changeLang('en')}
               style={{ padding: '8px 14px', fontSize: 13 }}
             >
-              English
+              {t('settings.english')}
             </button>
             <button
               className={`btn ${i18n.language === 'zh' ? 'btn-primary' : 'btn-secondary'}`}
               onClick={() => changeLang('zh')}
               style={{ padding: '8px 14px', fontSize: 13 }}
             >
-              中文
+              {t('settings.chinese')}
             </button>
           </div>
         </div>
@@ -135,15 +132,15 @@ export default function SettingsScreen() {
       <div className="card" style={{ margin: '0 16px 14px' }}>
         <div className="setting-row">
           <div>
-            <div className="setting-label">Backend URL</div>
-            <div className="setting-desc">Gateway server address</div>
+            <div className="setting-label">{t('settings.backendUrl')}</div>
+            <div className="setting-desc">{t('settings.backendUrlDesc')}</div>
           </div>
           <input type="text" defaultValue="http://localhost:3000" style={{ width: 200, textAlign: 'right' }} />
         </div>
         <div className="setting-row">
           <div>
-            <div className="setting-label">Download Folder</div>
-            <div className="setting-desc">Local media storage path</div>
+            <div className="setting-label">{t('settings.downloadFolder')}</div>
+            <div className="setting-desc">{t('settings.downloadFolderDesc')}</div>
           </div>
           <input type="text" defaultValue="~/Downloads/PublishOS" readOnly style={{ width: 200, textAlign: 'right', background: 'var(--surface-hover)' }} />
         </div>

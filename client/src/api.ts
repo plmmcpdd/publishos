@@ -4,6 +4,7 @@ export interface ContentItem {
   platform: string;
   scheduledAt: string;
   status: string;
+  thumbnailUrl?: string;
   postUrl?: string;
 }
 
@@ -18,6 +19,8 @@ interface ApiContent {
   updatedAt?: string;
   publishedAt?: string | null;
   status: string;
+  thumbnailUrl?: string | null;
+  thumbnail_url?: string | null;
   platformPostUrl?: string | null;
 }
 
@@ -38,6 +41,7 @@ function mapContent(item: ApiContent): ContentItem {
     platform: item.platform || firstPlatform(item.platforms),
     scheduledAt: item.scheduleAt || item.publishedAt || item.updatedAt || '',
     status: item.status,
+    thumbnailUrl: item.thumbnailUrl || item.thumbnail_url || undefined,
     postUrl: item.platformPostUrl || undefined,
   };
 }

@@ -1,43 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-
-interface HistoryItem {
-  id: string;
-  title: string;
-  platform: 'tiktok' | 'instagram' | 'youtube' | 'facebook';
-  publishedAt: string;
-  status: 'published' | 'failed';
-  postUrl?: string;
-  isAiGenerated?: boolean;
-}
-
-const mockHistory: HistoryItem[] = [
-  {
-    id: 'h1',
-    title: 'AC Maintenance Guide: Keep Your Cool',
-    platform: 'tiktok',
-    publishedAt: '2024-06-07 10:00',
-    status: 'published',
-    postUrl: 'https://tiktok.com/@acme/video/123',
-    isAiGenerated: true,
-  },
-  {
-    id: 'h2',
-    title: 'Water Heater Tips for Winter',
-    platform: 'instagram',
-    publishedAt: '2024-06-06 14:00',
-    status: 'published',
-    isAiGenerated: false,
-  },
-  {
-    id: 'h3',
-    title: 'AI Tool Review: ChatGPT vs Claude',
-    platform: 'tiktok',
-    publishedAt: '2024-06-05 09:00',
-    status: 'failed',
-    isAiGenerated: true,
-  },
-];
+import { ContentItem, fetchContents } from '../api';
 
 function PlatformTag({ platform }: { platform: string }) {
   const labels: Record<string, string> = {
@@ -63,10 +26,28 @@ function StatusBadge({ status }: { status: string }) {
 
 export default function HistoryScreen() {
   const { t } = useTranslation();
-  const [history] = useState<HistoryItem[]>(mockHistory);
+  const [history, setHistory] = useState<ContentItem[]>([]);
   const [filter, setFilter] = useState('all');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
   const platforms = ['all', 'tiktok', 'instagram', 'youtube', 'facebook'];
+
+  useEffect(() => {
+    async function loadHistory() {
+      setLoading(true);
+      setError('');
+      try {
+        setHistory(await fetchContents('published,failed'));
+      } catch (err) {
+        setError(err instanceof Error ? err.message : t('common.error'));
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    void loadHistory();
+  }, []);
 
   const filtered = filter === 'all' ? history : history.filter((h) => h.platform === filter);
 
@@ -110,7 +91,15 @@ export default function HistoryScreen() {
 
       {/* History list */}
       <div className="queue-list">
-        {filtered.length === 0 ? (
+        {loading ? (
+          <div className="empty-state">
+            <div className="empty-state-title">{t('common.loading')}</div>
+          </div>
+        ) : error ? (
+          <div className="empty-state">
+            <div className="empty-state-title">{error}</div>
+          </div>
+        ) : filtered.length === 0 ? (
           <div className="empty-state">
             <div className="empty-state-title">{t('history.emptyTitle')}</div>
             <div className="empty-state-sub">{t('history.emptySub')}</div>
@@ -120,7 +109,9 @@ export default function HistoryScreen() {
             <div key={item.id} className="card">
               <div className="card-header">
                 <div className="thumb">
-                  {item.status === 'published' ? (
+                  {item.thumbnailUrl ? (
+                    <img src={item.thumbnailUrl} alt={item.title} />
+                  ) : item.status === 'published' ? (
                     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#059669" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <polyline points="20 6 9 17 4 12" />
                     </svg>
@@ -133,10 +124,9 @@ export default function HistoryScreen() {
                 </div>
                 <div className="card-meta">
                   <div className="card-title">{item.title}</div>
-                  <div className="card-schedule">{item.publishedAt}</div>
+                  <div className="card-schedule">{item.scheduledAt || '-'}</div>
                   <div className="tag-row">
                     <PlatformTag platform={item.platform} />
-                    {item.isAiGenerated && <span className="tag tag-ai">{t('common.aiGenerated')}</span>}
                     <StatusBadge status={item.status} />
                   </div>
                 </div>

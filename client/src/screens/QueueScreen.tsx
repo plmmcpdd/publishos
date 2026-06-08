@@ -1,46 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-
-interface QueueJob {
-  id: string;
-  title: string;
-  platform: 'tiktok' | 'instagram' | 'youtube' | 'facebook';
-  scheduledAt: string;
-  mediaUrl: string;
-  status: 'pending' | 'approved' | 'publishing' | 'published' | 'failed';
-  isAiGenerated?: boolean;
-  thumbnail?: string;
-}
-
-const mockJobs: QueueJob[] = [
-  {
-    id: '1',
-    title: 'HVAC Summer Tips: 5 Ways to Save Energy',
-    platform: 'tiktok',
-    scheduledAt: '14:00',
-    mediaUrl: 'video1.mp4',
-    status: 'pending',
-    isAiGenerated: true,
-  },
-  {
-    id: '2',
-    title: 'AI Startup Launch Announcement',
-    platform: 'instagram',
-    scheduledAt: '15:30',
-    mediaUrl: 'video2.mp4',
-    status: 'approved',
-    isAiGenerated: true,
-  },
-  {
-    id: '3',
-    title: 'Plumbing FAQ: Leaky Faucet Fixes',
-    platform: 'tiktok',
-    scheduledAt: '17:00',
-    mediaUrl: 'video3.mp4',
-    status: 'pending',
-    isAiGenerated: false,
-  },
-];
+import { ContentItem, fetchContents, publishContent } from '../api';
 
 function PlatformTag({ platform }: { platform: string }) {
   const labels: Record<string, string> = {
@@ -55,6 +15,7 @@ function PlatformTag({ platform }: { platform: string }) {
 function StatusBadge({ status }: { status: string }) {
   const map: Record<string, string> = {
     pending: 'status-pending',
+    pending_review: 'status-pending',
     approved: 'status-approved',
     publishing: 'status-approved',
     published: 'status-published',
@@ -62,6 +23,7 @@ function StatusBadge({ status }: { status: string }) {
   };
   const labels: Record<string, string> = {
     pending: 'Pending',
+    pending_review: 'Queued',
     approved: 'Approved',
     publishing: 'Publishing',
     published: 'Published',
@@ -80,8 +42,35 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean
 
 export default function QueueScreen() {
   const { t } = useTranslation();
-  const [jobs] = useState<QueueJob[]>(mockJobs);
+  const [jobs, setJobs] = useState<ContentItem[]>([]);
   const [autoPublish, setAutoPublish] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  const loadJobs = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      setJobs(await fetchContents('queued'));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('common.error'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadJobs();
+  }, []);
+
+  const handlePublish = async (id: string) => {
+    try {
+      await publishContent(id);
+      await loadJobs();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('queue.publishFailed'));
+    }
+  };
 
   return (
     <div className="content-area">
@@ -116,7 +105,15 @@ export default function QueueScreen() {
 
       {/* Job list */}
       <div className="queue-list">
-        {jobs.length === 0 ? (
+        {loading ? (
+          <div className="empty-state">
+            <div className="empty-state-title">{t('common.loading')}</div>
+          </div>
+        ) : error ? (
+          <div className="empty-state">
+            <div className="empty-state-title">{error}</div>
+          </div>
+        ) : jobs.length === 0 ? (
           <div className="empty-state">
             <div className="empty-state-title">{t('queue.emptyTitle')}</div>
             <div className="empty-state-sub">{t('queue.emptySub')}</div>
@@ -126,22 +123,25 @@ export default function QueueScreen() {
             <div key={job.id} className="card">
               <div className="card-header">
                 <div className="thumb">
-                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <polygon points="5 3 19 12 5 21 5 3" />
-                  </svg>
+                  {job.thumbnailUrl ? (
+                    <img src={job.thumbnailUrl} alt={job.title} />
+                  ) : (
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <polygon points="5 3 19 12 5 21 5 3" />
+                    </svg>
+                  )}
                 </div>
                 <div className="card-meta">
                   <div className="card-title">{job.title}</div>
                   <div className="card-schedule">{t('queue.scheduledAt')} {job.scheduledAt}</div>
                   <div className="tag-row">
                     <PlatformTag platform={job.platform} />
-                    {job.isAiGenerated && <span className="tag tag-ai">{t('common.aiGenerated')}</span>}
                     <StatusBadge status={job.status} />
                   </div>
                 </div>
               </div>
               <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>
-                <button className="btn btn-primary" style={{ flex: 1 }}>
+                <button className="btn btn-primary" style={{ flex: 1 }} onClick={() => void handlePublish(job.id)}>
                   {t('queue.publishNow')}
                 </button>
                 <button className="btn btn-secondary" style={{ flex: 1 }}>

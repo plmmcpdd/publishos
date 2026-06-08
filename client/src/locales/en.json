@@ -1,4 +1,10 @@
 {
+  "nav": {
+    "queue": "Queue",
+    "history": "History",
+    "settings": "Settings",
+    "connected": "Connected"
+  },
   "common": {
     "connected": "Connected",
     "on": "ON",
@@ -8,7 +14,8 @@
     "confirm": "Confirm",
     "save": "Save",
     "delete": "Delete",
-    "loading": "Loading..."
+    "loading": "Loading...",
+    "error": "Something went wrong"
   },
   "queue": {
     "title": "Queue",
@@ -36,11 +43,26 @@
   "settings": {
     "title": "Settings",
     "heading": "Settings",
+    "subtitle": "Manage accounts and preferences",
     "account": "Account",
     "notifications": "Notifications",
     "language": "Language",
+    "languageDesc": "Interface language",
+    "english": "English",
+    "chinese": "Chinese",
+    "preferences": "Preferences",
     "theme": "Theme",
     "privacy": "Privacy",
-    "signOut": "Sign Out"
+    "signOut": "Sign Out",
+    "disconnect": "Disconnect",
+    "connect": "Connect",
+    "systemTrayNotifications": "System Tray Notifications",
+    "systemTrayNotificationsDesc": "Show toast when new jobs arrive",
+    "launchAtLogin": "Launch at Login",
+    "launchAtLoginDesc": "Start PublishOS when Windows boots",
+    "backendUrl": "Backend URL",
+    "backendUrlDesc": "Gateway server address",
+    "downloadFolder": "Download Folder",
+    "downloadFolderDesc": "Local media storage path"
   }
 }

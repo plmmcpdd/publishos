@@ -1,4 +1,10 @@
 {
+  "nav": {
+    "queue": "队列",
+    "history": "历史",
+    "settings": "设置",
+    "connected": "已连接"
+  },
   "common": {
     "connected": "已连接",
     "on": "开启",
@@ -8,7 +14,8 @@
     "confirm": "确认",
     "save": "保存",
     "delete": "删除",
-    "loading": "加载中..."
+    "loading": "加载中...",
+    "error": "出现错误"
   },
   "queue": {
     "title": "队列",
@@ -36,11 +43,26 @@
   "settings": {
     "title": "设置",
     "heading": "设置",
+    "subtitle": "管理账号和偏好设置",
     "account": "账号",
     "notifications": "通知",
     "language": "语言",
+    "languageDesc": "界面语言",
+    "english": "英文",
+    "chinese": "中文",
+    "preferences": "偏好设置",
     "theme": "主题",
     "privacy": "隐私",
-    "signOut": "退出登录"
+    "signOut": "退出登录",
+    "disconnect": "断开",
+    "connect": "连接",
+    "systemTrayNotifications": "系统托盘通知",
+    "systemTrayNotificationsDesc": "有新任务时显示通知",
+    "launchAtLogin": "开机启动",
+    "launchAtLoginDesc": "Windows 启动时打开 PublishOS",
+    "backendUrl": "后端地址",
+    "backendUrlDesc": "网关服务器地址",
+    "downloadFolder": "下载目录",
+    "downloadFolderDesc": "本地媒体存储路径"
   }
 }

@@ -1,0 +1,31 @@
+name: Build & Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: cd client && npm install
+      - run: cd client && npm run build
+      - name: Build Windows
+        if: matrix.os == 'windows-latest'
+        run: cd client && npm run build:win
+      - name: Build Mac
+        if: matrix.os == 'macos-latest'
+        run: cd client && npm run build:mac
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: publishos-${{ matrix.os }}
+          path: client/release/

@@ -2,6 +2,9 @@
   --bg-primary: #faf8f5;
   --bg-secondary: #ffffff;
   --bg-card: #f5f2ed;
+  --surface: #ffffff;
+  --border-light: #eee8df;
+  --accent-primary: #1e40af;
   --text-primary: #1a1a1a;
   --text-secondary: #6b6560;
   --accent: #1e40af;
@@ -13,6 +16,7 @@
   --radius: 8px;
   --font-sans: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   --font-serif: 'Playfair Display', Georgia, 'Times New Roman', serif;
+  --font-display: var(--font-serif);
 }
 
 * {
@@ -65,6 +69,15 @@ body {
 
 .btn-secondary:hover {
   background: var(--bg-primary);
+}
+
+.btn-danger {
+  background: var(--danger);
+  color: #fff;
+}
+
+.btn-danger:hover {
+  background: #991b1b;
 }
 
 .card {
@@ -125,4 +138,189 @@ input:focus, textarea:focus, select:focus {
 
 .error-state {
   color: var(--danger);
+}
+
+.content-area {
+  min-height: 100%;
+  padding-bottom: 32px;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: -4px 0 22px;
+}
+
+.topbar-title {
+  font-family: var(--font-serif);
+  font-size: 28px;
+  font-weight: 600;
+}
+
+.topbar-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.status-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--text-secondary);
+}
+
+.status-dot.online {
+  background: var(--success);
+}
+
+.auto-publish-bar {
+  align-items: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 20px;
+  padding: 16px;
+}
+
+.auto-publish-bar strong,
+.auto-publish-bar span {
+  display: block;
+}
+
+.auto-publish-bar span {
+  color: var(--text-secondary);
+  font-size: 13px;
+  margin-top: 4px;
+}
+
+.toggle {
+  align-items: center;
+  background: var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+  display: flex;
+  height: 28px;
+  padding: 3px;
+  transition: background 0.15s ease;
+  width: 50px;
+}
+
+.toggle.on {
+  background: var(--accent);
+}
+
+.toggle-knob {
+  background: #fff;
+  border-radius: 50%;
+  height: 22px;
+  transition: transform 0.15s ease;
+  width: 22px;
+}
+
+.toggle.on .toggle-knob {
+  transform: translateX(22px);
+}
+
+.section-label {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  margin: 0 0 10px;
+  text-transform: uppercase;
+}
+
+.queue-list {
+  display: grid;
+  gap: 14px;
+}
+
+.card-header {
+  display: flex;
+  gap: 14px;
+}
+
+.thumb {
+  align-items: center;
+  background: var(--bg-card);
+  border-radius: 8px;
+  display: flex;
+  flex: 0 0 72px;
+  height: 96px;
+  justify-content: center;
+  overflow: hidden;
+  width: 72px;
+}
+
+.thumb img {
+  height: 100%;
+  object-fit: cover;
+  width: 100%;
+}
+
+.card-meta {
+  flex: 1;
+  min-width: 0;
+}
+
+.card-title {
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.35;
+  margin-bottom: 6px;
+}
+
+.card-schedule {
+  color: var(--text-secondary);
+  font-size: 13px;
+  margin-bottom: 10px;
+}
+
+.tag-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tag {
+  align-items: center;
+  border-radius: 999px;
+  display: inline-flex;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+}
+
+.tag-tiktok {
+  background: rgba(30, 64, 175, 0.08);
+  color: var(--accent);
+}
+
+.tag-ai {
+  background: rgba(217, 119, 6, 0.12);
+  color: var(--warning);
+}
+
+.empty-state {
+  background: var(--surface);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 28px;
+  text-align: center;
+}
+
+.empty-state-title {
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.empty-state-sub {
+  color: var(--text-secondary);
+  font-size: 13px;
 }
