@@ -1,57 +1,46 @@
 {
-  "nav": {
-    "queue": "Queue",
-    "history": "History",
-    "settings": "Settings",
-    "connected": "Connected"
-  },
   "common": {
-    "loading": "Loading...",
-    "empty": "No items yet",
-    "error": "Something went wrong",
-    "retry": "Retry",
-    "allPlatforms": "All Platforms",
-    "tiktok": "TikTok",
-    "instagram": "Instagram"
+    "connected": "Connected",
+    "on": "ON",
+    "off": "OFF",
+    "aiGenerated": "AI Generated",
+    "cancel": "Cancel",
+    "confirm": "Confirm",
+    "save": "Save",
+    "delete": "Delete",
+    "loading": "Loading..."
   },
   "queue": {
-    "title": "Publish Queue",
-    "summary": "{{count}} jobs pending - Auto-publish is {{state}}",
-    "autoOn": "ON",
-    "autoOff": "OFF",
-    "autoPublish": "Auto-publish when scheduled time arrives",
-    "scheduled": "Scheduled {{time}}",
+    "title": "Queue",
+    "heading": "Publish Queue",
+    "jobsPending": "jobs pending",
+    "autoPublish": "Auto-Publish",
+    "autoPublishDesc": "Publish automatically when scheduled time arrives",
+    "upcoming": "Upcoming",
+    "scheduledAt": "Scheduled at",
     "publishNow": "Publish Now",
     "preview": "Preview",
     "skip": "Skip",
-    "published": "Published",
-    "publishFailed": "Publish failed"
+    "emptyTitle": "No jobs queued",
+    "emptySub": "New content will appear here when scheduled"
   },
   "history": {
-    "title": "Publish History",
-    "summary": "{{count}} total posts",
-    "viewOn": "View on {{platform}}"
+    "title": "History",
+    "heading": "Publish History",
+    "totalPosts": "total posts",
+    "filterAll": "All",
+    "viewOn": "View on",
+    "emptyTitle": "No history yet",
+    "emptySub": "Published posts will appear here"
   },
   "settings": {
     "title": "Settings",
-    "subtitle": "Manage accounts and preferences",
-    "connectedAccounts": "Connected Accounts",
-    "preferences": "Preferences",
+    "heading": "Settings",
+    "account": "Account",
+    "notifications": "Notifications",
     "language": "Language",
-    "english": "English",
-    "chinese": "Chinese",
-    "disconnect": "Disconnect",
-    "connect": "Connect",
-    "downloadFolder": "Download folder",
-    "backendUrl": "Backend URL",
-    "showNotifications": "Show notifications in system tray",
-    "launchAtLogin": "Launch at login"
-  },
-  "status": {
-    "pending_review": "queued",
-    "approved": "approved",
-    "published": "published",
-    "failed": "failed",
-    "rejected": "rejected"
+    "theme": "Theme",
+    "privacy": "Privacy",
+    "signOut": "Sign Out"
   }
 }

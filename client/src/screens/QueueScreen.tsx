@@ -1,79 +1,159 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ContentItem, fetchContents, publishContent } from '../api';
+
+interface QueueJob {
+  id: string;
+  title: string;
+  platform: 'tiktok' | 'instagram' | 'youtube' | 'facebook';
+  scheduledAt: string;
+  mediaUrl: string;
+  status: 'pending' | 'approved' | 'publishing' | 'published' | 'failed';
+  isAiGenerated?: boolean;
+  thumbnail?: string;
+}
+
+const mockJobs: QueueJob[] = [
+  {
+    id: '1',
+    title: 'HVAC Summer Tips: 5 Ways to Save Energy',
+    platform: 'tiktok',
+    scheduledAt: '14:00',
+    mediaUrl: 'video1.mp4',
+    status: 'pending',
+    isAiGenerated: true,
+  },
+  {
+    id: '2',
+    title: 'AI Startup Launch Announcement',
+    platform: 'instagram',
+    scheduledAt: '15:30',
+    mediaUrl: 'video2.mp4',
+    status: 'approved',
+    isAiGenerated: true,
+  },
+  {
+    id: '3',
+    title: 'Plumbing FAQ: Leaky Faucet Fixes',
+    platform: 'tiktok',
+    scheduledAt: '17:00',
+    mediaUrl: 'video3.mp4',
+    status: 'pending',
+    isAiGenerated: false,
+  },
+];
+
+function PlatformTag({ platform }: { platform: string }) {
+  const labels: Record<string, string> = {
+    tiktok: 'TikTok',
+    instagram: 'Instagram',
+    youtube: 'YouTube',
+    facebook: 'Facebook',
+  };
+  return <span className="tag tag-tiktok">{labels[platform] || platform}</span>;
+}
+
+function StatusBadge({ status }: { status: string }) {
+  const map: Record<string, string> = {
+    pending: 'status-pending',
+    approved: 'status-approved',
+    publishing: 'status-approved',
+    published: 'status-published',
+    failed: 'status-failed',
+  };
+  const labels: Record<string, string> = {
+    pending: 'Pending',
+    approved: 'Approved',
+    publishing: 'Publishing',
+    published: 'Published',
+    failed: 'Failed',
+  };
+  return <span className={`status-badge ${map[status] || 'status-pending'}`}>{labels[status] || status}</span>;
+}
+
+function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <div className={`toggle ${checked ? 'on' : ''}`} onClick={() => onChange(!checked)} role="switch" aria-checked={checked}>
+      <div className="toggle-knob" />
+    </div>
+  );
+}
 
 export default function QueueScreen() {
   const { t } = useTranslation();
-  const [jobs, setJobs] = useState<ContentItem[]>([]);
+  const [jobs] = useState<QueueJob[]>(mockJobs);
   const [autoPublish, setAutoPublish] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-
-  const loadJobs = async () => {
-    setLoading(true);
-    setError('');
-    try {
-      setJobs(await fetchContents('queued'));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : t('common.error'));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    void loadJobs();
-  }, []);
-
-  const handlePublish = async (id: string) => {
-    try {
-      await publishContent(id);
-      await loadJobs();
-    } catch {
-      setError(t('queue.publishFailed'));
-    }
-  };
 
   return (
-    <div>
+    <div className="content-area">
+      {/* Top Bar */}
+      <div className="topbar">
+        <div className="topbar-title">{t('queue.title')}</div>
+        <div className="topbar-badge">
+          <span className="status-dot online" />
+          {t('common.connected')}
+        </div>
+      </div>
+
+      {/* Screen Header */}
       <div className="screen-header">
-        <h2>{t('queue.title')}</h2>
-        <p>{t('queue.summary', { count: jobs.length, state: autoPublish ? t('queue.autoOn') : t('queue.autoOff') })}</p>
+        <h2>{t('queue.heading')}</h2>
+        <p>
+          {jobs.length} {t('queue.jobsPending')} — {t('queue.autoPublish')} {autoPublish ? t('common.on') : t('common.off')}
+        </p>
       </div>
 
-      <div className="card" style={{ marginBottom: 20 }}>
-        <label className="auto-publish-toggle">
-          <input
-            type="checkbox"
-            checked={autoPublish}
-            onChange={(e) => setAutoPublish(e.target.checked)}
-          />
-          <span className="toggle-label">{t('queue.autoPublish')}</span>
-        </label>
+      {/* Auto-publish toggle bar */}
+      <div className="auto-publish-bar">
+        <div>
+          <strong>{t('queue.autoPublish')}</strong>
+          <span>{t('queue.autoPublishDesc')}</span>
+        </div>
+        <Toggle checked={autoPublish} onChange={setAutoPublish} />
       </div>
 
-      {loading && <div className="card">{t('common.loading')}</div>}
-      {error && <div className="card error-state">{error}</div>}
-      {!loading && !error && jobs.length === 0 && <div className="card">{t('common.empty')}</div>}
+      {/* Section label */}
+      <div className="section-label">{t('queue.upcoming')}</div>
 
+      {/* Job list */}
       <div className="queue-list">
-        {jobs.map((job) => (
-          <div key={job.id} className="queue-item card">
-            <div className="queue-item-main">
-              <div className="platform-icon">{job.platform.slice(0, 1).toUpperCase()}</div>
-              <div className="queue-item-info">
-                <h4>{job.title}</h4>
-                <span className="meta">{job.platform} - {t('queue.scheduled', { time: job.scheduledAt || '-' })}</span>
-              </div>
-              <span className={`status-badge status-${job.status}`}>{t(`status.${job.status}`, job.status)}</span>
-            </div>
-            <div className="queue-item-actions">
-              <button className="btn btn-primary" onClick={() => void handlePublish(job.id)}>{t('queue.publishNow')}</button>
-              <button className="btn btn-secondary">{t('queue.preview')}</button>
-              <button className="btn btn-secondary">{t('queue.skip')}</button>
-            </div>
+        {jobs.length === 0 ? (
+          <div className="empty-state">
+            <div className="empty-state-title">{t('queue.emptyTitle')}</div>
+            <div className="empty-state-sub">{t('queue.emptySub')}</div>
           </div>
-        ))}
+        ) : (
+          jobs.map((job) => (
+            <div key={job.id} className="card">
+              <div className="card-header">
+                <div className="thumb">
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polygon points="5 3 19 12 5 21 5 3" />
+                  </svg>
+                </div>
+                <div className="card-meta">
+                  <div className="card-title">{job.title}</div>
+                  <div className="card-schedule">{t('queue.scheduledAt')} {job.scheduledAt}</div>
+                  <div className="tag-row">
+                    <PlatformTag platform={job.platform} />
+                    {job.isAiGenerated && <span className="tag tag-ai">{t('common.aiGenerated')}</span>}
+                    <StatusBadge status={job.status} />
+                  </div>
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>
+                <button className="btn btn-primary" style={{ flex: 1 }}>
+                  {t('queue.publishNow')}
+                </button>
+                <button className="btn btn-secondary" style={{ flex: 1 }}>
+                  {t('queue.preview')}
+                </button>
+                <button className="btn btn-secondary" style={{ width: 80 }}>
+                  {t('queue.skip')}
+                </button>
+              </div>
+            </div>
+          ))
+        )}
       </div>
     </div>
   );

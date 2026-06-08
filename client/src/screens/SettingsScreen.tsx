@@ -1,83 +1,158 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
+interface Account {
+  id: string;
+  platform: 'tiktok' | 'instagram' | 'youtube' | 'facebook';
+  username: string;
+  connected: boolean;
+}
+
+const platformNames: Record<string, string> = {
+  tiktok: 'TikTok',
+  instagram: 'Instagram',
+  youtube: 'YouTube',
+  facebook: 'Facebook',
+};
+
+function AccountAvatar({ platform }: { platform: string }) {
+  const initials: Record<string, string> = {
+    tiktok: 'T',
+    instagram: 'I',
+    youtube: 'Y',
+    facebook: 'F',
+  };
+  return <div className="account-avatar">{initials[platform] || platform.charAt(0).toUpperCase()}</div>;
+}
+
+function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <div className={`toggle ${checked ? 'on' : ''}`} onClick={() => onChange(!checked)} role="switch" aria-checked={checked}>
+      <div className="toggle-knob" />
+    </div>
+  );
+}
+
 export default function SettingsScreen() {
-  const { i18n, t } = useTranslation();
-  const [accounts, setAccounts] = useState([
+  const { t, i18n } = useTranslation();
+  const [accounts, setAccounts] = useState<Account[]>([
     { id: '1', platform: 'tiktok', username: '@acme_hvac', connected: true },
     { id: '2', platform: 'instagram', username: '@acme_hvac', connected: false },
   ]);
 
+  const [notify, setNotify] = useState(true);
+  const [launchAtLogin, setLaunchAtLogin] = useState(false);
+
   const toggleAccount = (id: string) => {
-    setAccounts((prev) =>
-      prev.map((a) => (a.id === id ? { ...a, connected: !a.connected } : a))
-    );
+    setAccounts((prev) => prev.map((a) => (a.id === id ? { ...a, connected: !a.connected } : a)));
   };
 
-  const changeLanguage = (language: string) => {
-    localStorage.setItem('publishos.language', language);
-    void i18n.changeLanguage(language);
+  const changeLang = (lang: string) => {
+    i18n.changeLanguage(lang);
   };
 
   return (
-    <div>
+    <div className="content-area">
+      {/* Top Bar */}
+      <div className="topbar">
+        <div className="topbar-title">{t('settings.title')}</div>
+        <div className="topbar-badge">
+          <span className="status-dot online" />
+          {t('common.connected')}
+        </div>
+      </div>
+
+      {/* Screen Header */}
       <div className="screen-header">
-        <h2>{t('settings.title')}</h2>
-        <p>{t('settings.subtitle')}</p>
+        <h2>{t('settings.heading')}</h2>
+        <p>Manage accounts and preferences</p>
       </div>
 
-      <div className="settings-section card" style={{ marginBottom: 20 }}>
-        <h3>{t('settings.connectedAccounts')}</h3>
-        <div className="account-list">
-          {accounts.map((acc) => (
-            <div key={acc.id} className="account-item">
-              <div className="account-info">
-                <span className="platform-icon">{acc.platform.slice(0, 1).toUpperCase()}</span>
-                <div>
-                  <div className="account-name">{acc.platform}</div>
-                  <div className="account-handle">{acc.username}</div>
-                </div>
-              </div>
-              <button
-                className={`btn ${acc.connected ? 'btn-secondary' : 'btn-primary'}`}
-                onClick={() => toggleAccount(acc.id)}
-              >
-                {acc.connected ? t('settings.disconnect') : t('settings.connect')}
-              </button>
+      {/* Accounts */}
+      <div className="section-label">{t('settings.account')}</div>
+      {accounts.map((acc) => (
+        <div key={acc.id} className="account-card">
+          <AccountAvatar platform={acc.platform} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700, marginBottom: 2 }}>
+              {platformNames[acc.platform] || acc.platform}
             </div>
-          ))}
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 500 }}>
+              {acc.username}
+            </div>
+          </div>
+          <button
+            className={`btn ${acc.connected ? 'btn-secondary' : 'btn-primary'}`}
+            onClick={() => toggleAccount(acc.id)}
+          >
+            {acc.connected ? 'Disconnect' : 'Connect'}
+          </button>
+        </div>
+      ))}
+
+      {/* Preferences */}
+      <div className="section-label" style={{ marginTop: 8 }}>Preferences</div>
+
+      <div className="card" style={{ margin: '0 16px 14px' }}>
+        <div className="setting-row">
+          <div>
+            <div className="setting-label">System Tray Notifications</div>
+            <div className="setting-desc">Show toast when new jobs arrive</div>
+          </div>
+          <Toggle checked={notify} onChange={setNotify} />
+        </div>
+        <div className="setting-row">
+          <div>
+            <div className="setting-label">Launch at Login</div>
+            <div className="setting-desc">Start PublishOS when Windows boots</div>
+          </div>
+          <Toggle checked={launchAtLogin} onChange={setLaunchAtLogin} />
+        </div>
+        <div className="setting-row">
+          <div>
+            <div className="setting-label">Language</div>
+            <div className="setting-desc">Interface language</div>
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              className={`btn ${i18n.language === 'en' ? 'btn-primary' : 'btn-secondary'}`}
+              onClick={() => changeLang('en')}
+              style={{ padding: '8px 14px', fontSize: 13 }}
+            >
+              English
+            </button>
+            <button
+              className={`btn ${i18n.language === 'zh' ? 'btn-primary' : 'btn-secondary'}`}
+              onClick={() => changeLang('zh')}
+              style={{ padding: '8px 14px', fontSize: 13 }}
+            >
+              中文
+            </button>
+          </div>
         </div>
       </div>
 
-      <div className="settings-section card">
-        <h3>{t('settings.preferences')}</h3>
-        <div className="pref-item">
-          <label>{t('settings.language')}</label>
-          <select value={i18n.language} onChange={(e) => changeLanguage(e.target.value)}>
-            <option value="en">{t('settings.english')}</option>
-            <option value="zh">{t('settings.chinese')}</option>
-          </select>
+      <div className="card" style={{ margin: '0 16px 14px' }}>
+        <div className="setting-row">
+          <div>
+            <div className="setting-label">Backend URL</div>
+            <div className="setting-desc">Gateway server address</div>
+          </div>
+          <input type="text" defaultValue="http://localhost:3000" style={{ width: 200, textAlign: 'right' }} />
         </div>
-        <div className="pref-item">
-          <label>{t('settings.downloadFolder')}</label>
-          <input type="text" value="~/Downloads/PublishOS" readOnly />
+        <div className="setting-row">
+          <div>
+            <div className="setting-label">Download Folder</div>
+            <div className="setting-desc">Local media storage path</div>
+          </div>
+          <input type="text" defaultValue="~/Downloads/PublishOS" readOnly style={{ width: 200, textAlign: 'right', background: 'var(--surface-hover)' }} />
         </div>
-        <div className="pref-item">
-          <label>{t('settings.backendUrl')}</label>
-          <input type="text" defaultValue="http://localhost:3000" />
-        </div>
-        <div className="pref-item">
-          <label>
-            <input type="checkbox" defaultChecked />
-            {t('settings.showNotifications')}
-          </label>
-        </div>
-        <div className="pref-item">
-          <label>
-            <input type="checkbox" />
-            {t('settings.launchAtLogin')}
-          </label>
-        </div>
+      </div>
+
+      <div style={{ padding: '0 16px 100px' }}>
+        <button className="btn btn-danger" style={{ width: '100%' }}>
+          {t('settings.signOut')}
+        </button>
       </div>
     </div>
   );
