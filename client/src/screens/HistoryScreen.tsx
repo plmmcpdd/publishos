@@ -2,6 +2,22 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ContentItem, fetchContents } from '../api';
 
+function formatDate(isoString: string, language: string): string {
+  if (!isoString) return '';
+  try {
+    const date = new Date(isoString);
+    return date.toLocaleString(language === 'zh' ? 'zh-CN' : 'en-US', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  } catch {
+    return isoString;
+  }
+}
+
 function PlatformTag({ platform }: { platform: string }) {
   const labels: Record<string, string> = {
     tiktok: 'TikTok',
@@ -13,19 +29,19 @@ function PlatformTag({ platform }: { platform: string }) {
 }
 
 function StatusBadge({ status }: { status: string }) {
+  const { t } = useTranslation();
   const map: Record<string, string> = {
     published: 'status-published',
     failed: 'status-failed',
+    rejected: 'status-rejected',
   };
-  const labels: Record<string, string> = {
-    published: 'Published',
-    failed: 'Failed',
-  };
-  return <span className={`status-badge ${map[status] || 'status-published'}`}>{labels[status] || status}</span>;
+  const key = `status.${status}`;
+  const label = t(key);
+  return <span className={`status-badge ${map[status] || 'status-published'}`}>{label === key ? status : label}</span>;
 }
 
 export default function HistoryScreen() {
-  const { t } = useTranslation();
+  const { i18n, t } = useTranslation();
   const [history, setHistory] = useState<ContentItem[]>([]);
   const [filter, setFilter] = useState('all');
   const [loading, setLoading] = useState(true);
@@ -38,7 +54,7 @@ export default function HistoryScreen() {
       setLoading(true);
       setError('');
       try {
-        setHistory(await fetchContents('published,failed'));
+        setHistory(await fetchContents('published,failed,rejected'));
       } catch (err) {
         setError(err instanceof Error ? err.message : t('common.error'));
       } finally {
@@ -53,7 +69,6 @@ export default function HistoryScreen() {
 
   return (
     <div className="content-area">
-      {/* Top Bar */}
       <div className="topbar">
         <div className="topbar-title">{t('history.title')}</div>
         <div className="topbar-badge">
@@ -62,7 +77,6 @@ export default function HistoryScreen() {
         </div>
       </div>
 
-      {/* Screen Header */}
       <div className="screen-header">
         <h2>{t('history.heading')}</h2>
         <p>
@@ -70,7 +84,6 @@ export default function HistoryScreen() {
         </p>
       </div>
 
-      {/* Filter pills */}
       <div style={{ display: 'flex', gap: 8, padding: '0 16px', marginBottom: 12, overflowX: 'auto' }}>
         {platforms.map((p) => (
           <button
@@ -89,7 +102,6 @@ export default function HistoryScreen() {
         ))}
       </div>
 
-      {/* History list */}
       <div className="queue-list">
         {loading ? (
           <div className="empty-state">
@@ -124,7 +136,7 @@ export default function HistoryScreen() {
                 </div>
                 <div className="card-meta">
                   <div className="card-title">{item.title}</div>
-                  <div className="card-schedule">{item.scheduledAt || '-'}</div>
+                  <div className="card-schedule">{formatDate(item.scheduledAt, i18n.language)}</div>
                   <div className="tag-row">
                     <PlatformTag platform={item.platform} />
                     <StatusBadge status={item.status} />

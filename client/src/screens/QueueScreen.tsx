@@ -2,6 +2,22 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ContentItem, fetchContents, publishContent } from '../api';
 
+function formatDate(isoString: string, language: string): string {
+  if (!isoString) return '';
+  try {
+    const date = new Date(isoString);
+    return date.toLocaleString(language === 'zh' ? 'zh-CN' : 'en-US', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  } catch {
+    return isoString;
+  }
+}
+
 function PlatformTag({ platform }: { platform: string }) {
   const labels: Record<string, string> = {
     tiktok: 'TikTok',
@@ -13,23 +29,20 @@ function PlatformTag({ platform }: { platform: string }) {
 }
 
 function StatusBadge({ status }: { status: string }) {
+  const { t } = useTranslation();
   const map: Record<string, string> = {
+    queued: 'status-pending',
     pending: 'status-pending',
     pending_review: 'status-pending',
     approved: 'status-approved',
     publishing: 'status-approved',
     published: 'status-published',
     failed: 'status-failed',
+    rejected: 'status-rejected',
   };
-  const labels: Record<string, string> = {
-    pending: 'Pending',
-    pending_review: 'Queued',
-    approved: 'Approved',
-    publishing: 'Publishing',
-    published: 'Published',
-    failed: 'Failed',
-  };
-  return <span className={`status-badge ${map[status] || 'status-pending'}`}>{labels[status] || status}</span>;
+  const key = `status.${status}`;
+  const label = t(key);
+  return <span className={`status-badge ${map[status] || 'status-pending'}`}>{label === key ? status : label}</span>;
 }
 
 function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
@@ -41,7 +54,7 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean
 }
 
 export default function QueueScreen() {
-  const { t } = useTranslation();
+  const { i18n, t } = useTranslation();
   const [jobs, setJobs] = useState<ContentItem[]>([]);
   const [autoPublish, setAutoPublish] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -74,7 +87,6 @@ export default function QueueScreen() {
 
   return (
     <div className="content-area">
-      {/* Top Bar */}
       <div className="topbar">
         <div className="topbar-title">{t('queue.title')}</div>
         <div className="topbar-badge">
@@ -83,7 +95,6 @@ export default function QueueScreen() {
         </div>
       </div>
 
-      {/* Screen Header */}
       <div className="screen-header">
         <h2>{t('queue.heading')}</h2>
         <p>
@@ -91,7 +102,6 @@ export default function QueueScreen() {
         </p>
       </div>
 
-      {/* Auto-publish toggle bar */}
       <div className="auto-publish-bar">
         <div>
           <strong>{t('queue.autoPublish')}</strong>
@@ -100,10 +110,8 @@ export default function QueueScreen() {
         <Toggle checked={autoPublish} onChange={setAutoPublish} />
       </div>
 
-      {/* Section label */}
       <div className="section-label">{t('queue.upcoming')}</div>
 
-      {/* Job list */}
       <div className="queue-list">
         {loading ? (
           <div className="empty-state">
@@ -133,7 +141,7 @@ export default function QueueScreen() {
                 </div>
                 <div className="card-meta">
                   <div className="card-title">{job.title}</div>
-                  <div className="card-schedule">{t('queue.scheduledAt')} {job.scheduledAt}</div>
+                  <div className="card-schedule">{t('queue.scheduledAt')} {formatDate(job.scheduledAt, i18n.language)}</div>
                   <div className="tag-row">
                     <PlatformTag platform={job.platform} />
                     <StatusBadge status={job.status} />

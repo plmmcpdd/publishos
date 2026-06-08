@@ -19,17 +19,18 @@
   },
   "queue": {
     "title": "队列",
-    "heading": "待发布队列",
+    "heading": "发布队列",
     "jobsPending": "个待发布任务",
     "autoPublish": "自动发布",
     "autoPublishDesc": "到达预定时间后自动发布",
     "upcoming": "即将发布",
     "scheduledAt": "预定时间",
     "publishNow": "立即发布",
+    "publishFailed": "发布失败",
     "preview": "预览",
     "skip": "跳过",
-    "emptyTitle": "暂无待发布任务",
-    "emptySub": "新内容安排发布后将出现在此处"
+    "emptyTitle": "暂无队列任务",
+    "emptySub": "新内容排期后会显示在这里"
   },
   "history": {
     "title": "历史",
@@ -38,7 +39,16 @@
     "filterAll": "全部",
     "viewOn": "查看",
     "emptyTitle": "暂无历史记录",
-    "emptySub": "已发布的内容将出现在此处"
+    "emptySub": "发布过的内容会显示在这里"
+  },
+  "status": {
+    "queued": "队列中",
+    "pending": "待审核",
+    "approved": "已通过",
+    "publishing": "发布中",
+    "published": "已发布",
+    "failed": "失败",
+    "rejected": "已拒绝"
   },
   "settings": {
     "title": "设置",

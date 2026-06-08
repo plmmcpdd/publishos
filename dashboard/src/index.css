@@ -1,0 +1,14 @@
+@import '@fontsource/noto-sans-sc/400.css';
+@import '@fontsource/noto-sans-sc/500.css';
+@import '@fontsource/noto-sans-sc/700.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-brand-cream text-gray-800;
+    font-family: 'Noto Sans SC', system-ui, sans-serif;
+  }
+}

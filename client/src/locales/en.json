@@ -26,6 +26,7 @@
     "upcoming": "Upcoming",
     "scheduledAt": "Scheduled at",
     "publishNow": "Publish Now",
+    "publishFailed": "Publish failed",
     "preview": "Preview",
     "skip": "Skip",
     "emptyTitle": "No jobs queued",
@@ -39,6 +40,15 @@
     "viewOn": "View on",
     "emptyTitle": "No history yet",
     "emptySub": "Published posts will appear here"
+  },
+  "status": {
+    "queued": "Queued",
+    "pending": "Pending",
+    "approved": "Approved",
+    "publishing": "Publishing",
+    "published": "Published",
+    "failed": "Failed",
+    "rejected": "Rejected"
   },
   "settings": {
     "title": "Settings",
