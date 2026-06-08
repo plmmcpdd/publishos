@@ -1,29 +1,44 @@
-import { useState } from 'react';
-
-interface QueueJob {
-  id: string;
-  title: string;
-  platform: string;
-  scheduledAt: string;
-  mediaUrl: string;
-  status: 'pending' | 'publishing' | 'done';
-}
-
-const mockJobs: QueueJob[] = [
-  { id: '1', title: 'HVAC Summer Tips', platform: 'tiktok', scheduledAt: '14:00', mediaUrl: 'video1.mp4', status: 'pending' },
-  { id: '2', title: 'AI Startup Launch', platform: 'instagram', scheduledAt: '15:30', mediaUrl: 'video2.mp4', status: 'pending' },
-  { id: '3', title: 'Plumbing FAQ', platform: 'tiktok', scheduledAt: '17:00', mediaUrl: 'video3.mp4', status: 'pending' },
-];
+import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import { ContentItem, fetchContents, publishContent } from '../api';
 
 export default function QueueScreen() {
-  const [jobs] = useState<QueueJob[]>(mockJobs);
+  const { t } = useTranslation();
+  const [jobs, setJobs] = useState<ContentItem[]>([]);
   const [autoPublish, setAutoPublish] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  const loadJobs = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      setJobs(await fetchContents('queued'));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('common.error'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadJobs();
+  }, []);
+
+  const handlePublish = async (id: string) => {
+    try {
+      await publishContent(id);
+      await loadJobs();
+    } catch {
+      setError(t('queue.publishFailed'));
+    }
+  };
 
   return (
     <div>
       <div className="screen-header">
-        <h2>Publish Queue</h2>
-        <p>{jobs.length} jobs pending — Auto-publish is {autoPublish ? 'ON' : 'OFF'}</p>
+        <h2>{t('queue.title')}</h2>
+        <p>{t('queue.summary', { count: jobs.length, state: autoPublish ? t('queue.autoOn') : t('queue.autoOff') })}</p>
       </div>
 
       <div className="card" style={{ marginBottom: 20 }}>
@@ -33,25 +48,29 @@ export default function QueueScreen() {
             checked={autoPublish}
             onChange={(e) => setAutoPublish(e.target.checked)}
           />
-          <span className="toggle-label">Auto-publish when scheduled time arrives</span>
+          <span className="toggle-label">{t('queue.autoPublish')}</span>
         </label>
       </div>
+
+      {loading && <div className="card">{t('common.loading')}</div>}
+      {error && <div className="card error-state">{error}</div>}
+      {!loading && !error && jobs.length === 0 && <div className="card">{t('common.empty')}</div>}
 
       <div className="queue-list">
         {jobs.map((job) => (
           <div key={job.id} className="queue-item card">
             <div className="queue-item-main">
-              <div className="platform-icon">{job.platform === 'tiktok' ? '🎵' : '📷'}</div>
+              <div className="platform-icon">{job.platform.slice(0, 1).toUpperCase()}</div>
               <div className="queue-item-info">
                 <h4>{job.title}</h4>
-                <span className="meta">{job.platform} • Scheduled {job.scheduledAt}</span>
+                <span className="meta">{job.platform} - {t('queue.scheduled', { time: job.scheduledAt || '-' })}</span>
               </div>
-              <span className={`status-badge status-${job.status}`}>{job.status}</span>
+              <span className={`status-badge status-${job.status}`}>{t(`status.${job.status}`, job.status)}</span>
             </div>
             <div className="queue-item-actions">
-              <button className="btn btn-primary">Publish Now</button>
-              <button className="btn btn-secondary">Preview</button>
-              <button className="btn btn-secondary">Skip</button>
+              <button className="btn btn-primary" onClick={() => void handlePublish(job.id)}>{t('queue.publishNow')}</button>
+              <button className="btn btn-secondary">{t('queue.preview')}</button>
+              <button className="btn btn-secondary">{t('queue.skip')}</button>
             </div>
           </div>
         ))}

@@ -3,7 +3,7 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "sqlite"
 }
 
 model Client {
@@ -23,7 +23,7 @@ model AccountBinding {
   client            Client       @relation(fields: [clientId], references: [id])
   platform          String       // tiktok, instagram, facebook, x, youtube
   accountUsername   String
-  businessLocation  Json?        // { country, state, city }
+  businessLocation  String?      // JSON string: { country, state, city }
   active            Boolean      @default(true)
   createdAt         DateTime     @default(now())
   updatedAt         DateTime     @updatedAt
@@ -37,22 +37,22 @@ model Content {
   clientId          String
   client            Client          @relation(fields: [clientId], references: [id])
   title             String
-  description       String          @db.Text
-  caption           String?         @db.Text
-  hashtags          String[]
+  description       String
+  caption           String?
+  hashtags          String          @default("")
   videoUrl          String          // S3 key or presigned URL
   thumbnailUrl      String?
   aiGenerated       Boolean         @default(false)
-  aiTools           String[]
-  platforms         String[]        // target platforms
+  aiTools           String          @default("")
+  platforms         String          // JSON string: target platforms
   scheduleAt        DateTime?
   status            ContentStatus   @default(pending_review)
-  metadata          Json?           // { industry, campaign, content_type }
+  metadata          String?         // JSON string: { industry, campaign, content_type }
   createdAt         DateTime        @default(now())
   updatedAt         DateTime        @updatedAt
   assets            ContentAsset[]
   publishJobs       PublishJob[]
-  complianceResults Json?           // { copyright, ai_disclosure, platform_policy }
+  complianceResults String?         // JSON string: { copyright, ai_disclosure, platform_policy }
 }
 
 model ContentAsset {
@@ -94,7 +94,7 @@ model PublishJob {
   platform            String
   status              JobStatus      @default(pending)
   scheduleAt          DateTime?
-  publishOptions      Json?          // platform-specific options
+  publishOptions      String?        // JSON string: platform-specific options
   clientToken         String?        // short-lived token for client app
   jobToken            String?        // one-time token for status callback
   platformPostId      String?
@@ -104,7 +104,7 @@ model PublishJob {
   errorCode           String?
   errorDetail         String?
   retryable           Boolean         @default(false)
-  deviceFingerprint   Json?
+  deviceFingerprint   String?
   screenshotUrl       String?
   createdAt           DateTime       @default(now())
   updatedAt           DateTime       @updatedAt
@@ -127,7 +127,7 @@ model Device {
   clientId    String?
   lastSeen    DateTime @default(now())
   online      Boolean  @default(false)
-  capabilities String[] // tiktok_web, instagram_web, etc.
+  capabilities String  @default("") // JSON string: tiktok_web, instagram_web, etc.
   token       String   @unique // device_token for queue polling
   createdAt   DateTime @default(now())
 }
@@ -139,7 +139,7 @@ model AuditLog {
   actorType   String   // user, system, client_app
   targetType  String   // content, publish_job, account
   targetId    String
-  details     Json?
+  details     String?
   ipAddress   String?
   createdAt   DateTime @default(now())
 }

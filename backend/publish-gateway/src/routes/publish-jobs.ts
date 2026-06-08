@@ -59,7 +59,7 @@ router.post('/', authenticateUser, async (req: AuthRequest, res) => {
       accountBindingId: data.account_binding_id,
       platform: data.platform,
       scheduleAt: data.schedule_at ? new Date(data.schedule_at) : null,
-      publishOptions: data.publish_options || {},
+      publishOptions: JSON.stringify(data.publish_options || {}),
       status: 'pending',
     },
     include: { content: true, accountBinding: true }
@@ -90,7 +90,7 @@ router.post('/', authenticateUser, async (req: AuthRequest, res) => {
       actorType: 'user',
       targetType: 'publish_job',
       targetId: job.id,
-      details: { content_id: data.content_id, platform: data.platform }
+      details: JSON.stringify({ content_id: data.content_id, platform: data.platform })
     }
   });
 

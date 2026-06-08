@@ -1,0 +1,57 @@
+{
+  "nav": {
+    "queue": "待发布队列",
+    "history": "发布历史",
+    "settings": "设置",
+    "connected": "已连接"
+  },
+  "common": {
+    "loading": "加载中...",
+    "empty": "暂无内容",
+    "error": "出现错误",
+    "retry": "重试",
+    "allPlatforms": "全部平台",
+    "tiktok": "TikTok",
+    "instagram": "Instagram"
+  },
+  "queue": {
+    "title": "待发布队列",
+    "summary": "{{count}} 个任务待发布 - 自动发布{{state}}",
+    "autoOn": "已开启",
+    "autoOff": "已关闭",
+    "autoPublish": "到达计划时间后自动发布",
+    "scheduled": "计划时间 {{time}}",
+    "publishNow": "立即发布",
+    "preview": "预览",
+    "skip": "跳过",
+    "published": "已发布",
+    "publishFailed": "发布失败"
+  },
+  "history": {
+    "title": "发布历史",
+    "summary": "共 {{count}} 条发布记录",
+    "viewOn": "在 {{platform}} 查看"
+  },
+  "settings": {
+    "title": "设置",
+    "subtitle": "管理账号和偏好设置",
+    "connectedAccounts": "已连接账号",
+    "preferences": "偏好设置",
+    "language": "语言",
+    "english": "英文",
+    "chinese": "中文",
+    "disconnect": "断开",
+    "connect": "连接",
+    "downloadFolder": "下载目录",
+    "backendUrl": "后端地址",
+    "showNotifications": "在系统托盘显示通知",
+    "launchAtLogin": "开机启动"
+  },
+  "status": {
+    "pending_review": "待发布",
+    "approved": "已批准",
+    "published": "已发布",
+    "failed": "失败",
+    "rejected": "已拒绝"
+  }
+}

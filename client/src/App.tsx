@@ -1,10 +1,13 @@
 import { Routes, Route, NavLink } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import QueueScreen from './screens/QueueScreen';
 import HistoryScreen from './screens/HistoryScreen';
 import SettingsScreen from './screens/SettingsScreen';
 import './App.css';
 
 function App() {
+  const { t } = useTranslation();
+
   return (
     <div className="app">
       <aside className="sidebar">
@@ -14,22 +17,21 @@ function App() {
         </div>
         <nav className="nav">
           <NavLink to="/" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`} end>
-            <span className="nav-icon">📋</span>
-            <span>Queue</span>
-            <span className="badge">3</span>
+            <span className="nav-icon">Q</span>
+            <span>{t('nav.queue')}</span>
           </NavLink>
           <NavLink to="/history" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
-            <span className="nav-icon">📁</span>
-            <span>History</span>
+            <span className="nav-icon">H</span>
+            <span>{t('nav.history')}</span>
           </NavLink>
           <NavLink to="/settings" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
-            <span className="nav-icon">⚙️</span>
-            <span>Settings</span>
+            <span className="nav-icon">S</span>
+            <span>{t('nav.settings')}</span>
           </NavLink>
         </nav>
         <div className="sidebar-footer">
           <div className="connection-status online">
-            <span className="dot" /> Connected
+            <span className="dot" /> {t('nav.connected')}
           </div>
         </div>
       </aside>

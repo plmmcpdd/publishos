@@ -1,0 +1,9 @@
+{
+  "errors": {
+    "notFound": "Not found",
+    "internal": "Internal server error",
+    "invalidRequest": "Invalid request body",
+    "contentNotFound": "Content not found",
+    "publishFailed": "Unable to publish content"
+  }
+}

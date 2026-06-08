@@ -7,6 +7,8 @@ import publishJobRoutes from './routes/publish-jobs';
 import clientRoutes from './routes/client';
 import taskRoutes from './routes/tasks';
 import auditRoutes from './routes/audit';
+import apiContentRoutes from './routes/api-contents';
+import { languageMiddleware } from './middleware/language';
 
 dotenv.config();
 
@@ -15,10 +17,12 @@ const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(express.json());
+app.use(languageMiddleware);
 
 // Health check
 app.get('/health', (_req, res) => {
-  res.json({ status: 'ok', version: '0.1.0' });
+  const mode = process.env.DATABASE_URL?.startsWith('file:') ? 'mock-sqlite' : 'postgres';
+  res.json({ status: 'ok', version: '0.1.0', mode });
 });
 
 // API routes
@@ -27,16 +31,17 @@ app.use('/v1/publish-jobs', publishJobRoutes);
 app.use('/v1/client', clientRoutes);
 app.use('/v1/tasks', taskRoutes);
 app.use('/v1/audit', auditRoutes);
+app.use('/api/v1/contents', apiContentRoutes);
 
 // 404 handler
 app.use((_req, res) => {
-  res.status(404).json({ error: 'Not found' });
+  res.status(404).json({ error: res.locals.t('errors.notFound') });
 });
 
 // Error handler
 app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error(err);
-  res.status(500).json({ error: 'Internal server error' });
+  res.status(500).json({ error: res.locals.t('errors.internal') });
 });
 
 app.listen(PORT, () => {

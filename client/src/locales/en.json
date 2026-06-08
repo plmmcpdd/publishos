@@ -1,0 +1,57 @@
+{
+  "nav": {
+    "queue": "Queue",
+    "history": "History",
+    "settings": "Settings",
+    "connected": "Connected"
+  },
+  "common": {
+    "loading": "Loading...",
+    "empty": "No items yet",
+    "error": "Something went wrong",
+    "retry": "Retry",
+    "allPlatforms": "All Platforms",
+    "tiktok": "TikTok",
+    "instagram": "Instagram"
+  },
+  "queue": {
+    "title": "Publish Queue",
+    "summary": "{{count}} jobs pending - Auto-publish is {{state}}",
+    "autoOn": "ON",
+    "autoOff": "OFF",
+    "autoPublish": "Auto-publish when scheduled time arrives",
+    "scheduled": "Scheduled {{time}}",
+    "publishNow": "Publish Now",
+    "preview": "Preview",
+    "skip": "Skip",
+    "published": "Published",
+    "publishFailed": "Publish failed"
+  },
+  "history": {
+    "title": "Publish History",
+    "summary": "{{count}} total posts",
+    "viewOn": "View on {{platform}}"
+  },
+  "settings": {
+    "title": "Settings",
+    "subtitle": "Manage accounts and preferences",
+    "connectedAccounts": "Connected Accounts",
+    "preferences": "Preferences",
+    "language": "Language",
+    "english": "English",
+    "chinese": "Chinese",
+    "disconnect": "Disconnect",
+    "connect": "Connect",
+    "downloadFolder": "Download folder",
+    "backendUrl": "Backend URL",
+    "showNotifications": "Show notifications in system tray",
+    "launchAtLogin": "Launch at login"
+  },
+  "status": {
+    "pending_review": "queued",
+    "approved": "approved",
+    "published": "published",
+    "failed": "failed",
+    "rejected": "rejected"
+  }
+}

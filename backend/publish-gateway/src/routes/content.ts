@@ -64,14 +64,14 @@ router.post('/', authenticateUser, async (req: AuthRequest, res) => {
       title: data.title,
       description: data.description,
       caption: data.caption,
-      hashtags: data.hashtags || [],
+      hashtags: JSON.stringify(data.hashtags || []),
       videoUrl: data.video_url,
       thumbnailUrl: data.thumbnail_url,
       aiGenerated: data.ai_generated,
-      aiTools: data.ai_tools || [],
-      platforms: data.platforms,
+      aiTools: JSON.stringify(data.ai_tools || []),
+      platforms: JSON.stringify(data.platforms),
       scheduleAt: data.schedule_at ? new Date(data.schedule_at) : null,
-      metadata: data.metadata,
+      metadata: data.metadata ? JSON.stringify(data.metadata) : null,
       status: 'pending_review',
       assets: {
         create: (data.assets || []).map(a => ({
@@ -94,7 +94,7 @@ router.post('/', authenticateUser, async (req: AuthRequest, res) => {
       actorType: 'user',
       targetType: 'content',
       targetId: content.id,
-      details: { title: data.title, client_id: data.client_id }
+      details: JSON.stringify({ title: data.title, client_id: data.client_id })
     }
   });
 
@@ -156,7 +156,7 @@ router.post('/:id/approve', authenticateUser, async (req: AuthRequest, res) => {
       actorType: 'user',
       targetType: 'content',
       targetId: content.id,
-      details: { notes, previous_status: 'pending_review' }
+      details: JSON.stringify({ notes, previous_status: 'pending_review' })
     }
   });
 
@@ -179,7 +179,7 @@ router.post('/:id/reject', authenticateUser, async (req: AuthRequest, res) => {
       actorType: 'user',
       targetType: 'content',
       targetId: content.id,
-      details: { reason, detail }
+      details: JSON.stringify({ reason, detail })
     }
   });
 

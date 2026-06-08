@@ -1,0 +1,9 @@
+{
+  "errors": {
+    "notFound": "未找到",
+    "internal": "服务器内部错误",
+    "invalidRequest": "请求内容无效",
+    "contentNotFound": "内容不存在",
+    "publishFailed": "无法发布内容"
+  }
+}
