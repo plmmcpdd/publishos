@@ -27,6 +27,7 @@ function statusFilter(status?: string) {
   const mapped = requested.flatMap((item) => {
     if (item === 'queued') return ['pending_review', 'approved'];
     if (item === 'pending') return ['pending_review'];
+    if (item === 'confirmed') return ['published'];
     return [item];
   });
 

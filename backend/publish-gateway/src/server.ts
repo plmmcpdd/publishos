@@ -33,6 +33,8 @@ app.use('/v1/publish-jobs', publishJobRoutes);
 app.use('/v1/client', clientRoutes);
 app.use('/v1/tasks', taskRoutes);
 app.use('/v1/audit', auditRoutes);
+app.use('/v1/stats', statsRoutes);
+app.use('/v1/audit-logs', auditLogRoutes);
 app.use('/api/v1/contents', apiContentRoutes);
 app.use('/api/v1/stats', statsRoutes);
 app.use('/api/v1/audit-logs', auditLogRoutes);

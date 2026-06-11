@@ -73,6 +73,8 @@ enum ContentStatus {
   approved
   published
   failed
+  draft
+  delivered
 }
 
 enum JobStatus {

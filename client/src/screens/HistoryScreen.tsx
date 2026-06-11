@@ -1,21 +1,11 @@
 import { useEffect, useState } from 'react';
-import { useTranslation } from 'react-i18next';
-import { ContentItem, fetchContents } from '../api';
+import { ContentItem, fetchClientHistory } from '../api';
 
-function formatDate(isoString: string, language: string): string {
-  if (!isoString) return '';
-  try {
-    const date = new Date(isoString);
-    return date.toLocaleString(language === 'zh' ? 'zh-CN' : 'en-US', {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-  } catch {
-    return isoString;
-  }
+const CURRENT_CLIENT_ID = 'demo-client-1';
+
+function formatDate(value?: string) {
+  if (!value) return '';
+  return new Date(value).toLocaleString();
 }
 
 function PlatformTag({ platform }: { platform: string }) {
@@ -29,34 +19,23 @@ function PlatformTag({ platform }: { platform: string }) {
 }
 
 function StatusBadge({ status }: { status: string }) {
-  const { t } = useTranslation();
-  const map: Record<string, string> = {
-    published: 'status-published',
-    failed: 'status-failed',
-    rejected: 'status-rejected',
-  };
-  const key = `status.${status}`;
-  const label = t(key);
-  return <span className={`status-badge ${map[status] || 'status-published'}`}>{label === key ? status : label}</span>;
+  const label = status === 'published' ? 'Published' : 'Rejected';
+  return <span className={`status-badge ${status === 'published' ? 'status-published' : 'status-rejected'}`}>{label}</span>;
 }
 
 export default function HistoryScreen() {
-  const { i18n, t } = useTranslation();
   const [history, setHistory] = useState<ContentItem[]>([]);
-  const [filter, setFilter] = useState('all');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-
-  const platforms = ['all', 'tiktok', 'instagram', 'youtube', 'facebook'];
 
   useEffect(() => {
     async function loadHistory() {
       setLoading(true);
       setError('');
       try {
-        setHistory(await fetchContents('published,failed,rejected'));
+        setHistory(await fetchClientHistory(CURRENT_CLIENT_ID));
       } catch (err) {
-        setError(err instanceof Error ? err.message : t('common.error'));
+        setError(err instanceof Error ? err.message : 'Failed to load history');
       } finally {
         setLoading(false);
       }
@@ -65,59 +44,37 @@ export default function HistoryScreen() {
     void loadHistory();
   }, []);
 
-  const filtered = filter === 'all' ? history : history.filter((h) => h.platform === filter);
-
   return (
     <div className="content-area">
       <div className="topbar">
-        <div className="topbar-title">{t('history.title')}</div>
+        <div className="topbar-title">History</div>
         <div className="topbar-badge">
           <span className="status-dot online" />
-          {t('common.connected')}
+          Connected
         </div>
       </div>
 
       <div className="screen-header">
-        <h2>{t('history.heading')}</h2>
-        <p>
-          {history.length} {t('history.totalPosts')}
-        </p>
-      </div>
-
-      <div style={{ display: 'flex', gap: 8, padding: '0 16px', marginBottom: 12, overflowX: 'auto' }}>
-        {platforms.map((p) => (
-          <button
-            key={p}
-            className={`tag ${filter === p ? 'tag-tiktok' : ''}`}
-            onClick={() => setFilter(p)}
-            style={{
-              cursor: 'pointer',
-              border: filter === p ? '1px solid rgba(30, 64, 175, 0.3)' : '1px solid var(--border)',
-              background: filter === p ? 'rgba(30, 64, 175, 0.06)' : 'var(--surface)',
-              color: filter === p ? 'var(--accent-primary)' : 'var(--text-secondary)',
-            }}
-          >
-            {p === 'all' ? t('history.filterAll') : p.charAt(0).toUpperCase() + p.slice(1)}
-          </button>
-        ))}
+        <h2>Publish History</h2>
+        <p>{history.length} completed items</p>
       </div>
 
       <div className="queue-list">
         {loading ? (
           <div className="empty-state">
-            <div className="empty-state-title">{t('common.loading')}</div>
+            <div className="empty-state-title">Loading...</div>
           </div>
         ) : error ? (
           <div className="empty-state">
             <div className="empty-state-title">{error}</div>
           </div>
-        ) : filtered.length === 0 ? (
+        ) : history.length === 0 ? (
           <div className="empty-state">
-            <div className="empty-state-title">{t('history.emptyTitle')}</div>
-            <div className="empty-state-sub">{t('history.emptySub')}</div>
+            <div className="empty-state-title">No history yet</div>
+            <div className="empty-state-sub">Published or rejected content will appear here.</div>
           </div>
         ) : (
-          filtered.map((item) => (
+          history.map((item) => (
             <div key={item.id} className="card">
               <div className="card-header">
                 <div className="thumb">
@@ -136,20 +93,13 @@ export default function HistoryScreen() {
                 </div>
                 <div className="card-meta">
                   <div className="card-title">{item.title}</div>
-                  <div className="card-schedule">{formatDate(item.scheduledAt, i18n.language)}</div>
+                  <div className="card-schedule">{formatDate(item.updatedAt || item.createdAt)}</div>
                   <div className="tag-row">
                     <PlatformTag platform={item.platform} />
                     <StatusBadge status={item.status} />
                   </div>
                 </div>
               </div>
-              {item.postUrl && (
-                <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border-light)' }}>
-                  <a href={item.postUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: 13, fontWeight: 500 }}>
-                    {t('history.viewOn')} {item.platform} →
-                  </a>
-                </div>
-              )}
             </div>
           ))
         )}

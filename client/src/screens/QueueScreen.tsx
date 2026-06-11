@@ -1,21 +1,11 @@
 import { useEffect, useState } from 'react';
-import { useTranslation } from 'react-i18next';
-import { ContentItem, fetchContents, publishContent } from '../api';
+import { confirmContent, ContentItem, fetchDeliveredContents } from '../api';
 
-function formatDate(isoString: string, language: string): string {
-  if (!isoString) return '';
-  try {
-    const date = new Date(isoString);
-    return date.toLocaleString(language === 'zh' ? 'zh-CN' : 'en-US', {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-  } catch {
-    return isoString;
-  }
+const CURRENT_CLIENT_ID = 'demo-client-1';
+
+function formatDate(value?: string) {
+  if (!value) return '';
+  return new Date(value).toLocaleDateString();
 }
 
 function PlatformTag({ platform }: { platform: string }) {
@@ -28,111 +18,74 @@ function PlatformTag({ platform }: { platform: string }) {
   return <span className="tag tag-tiktok">{labels[platform] || platform}</span>;
 }
 
-function StatusBadge({ status }: { status: string }) {
-  const { t } = useTranslation();
-  const map: Record<string, string> = {
-    queued: 'status-pending',
-    pending: 'status-pending',
-    pending_review: 'status-pending',
-    approved: 'status-approved',
-    publishing: 'status-approved',
-    published: 'status-published',
-    failed: 'status-failed',
-    rejected: 'status-rejected',
-  };
-  const key = `status.${status}`;
-  const label = t(key);
-  return <span className={`status-badge ${map[status] || 'status-pending'}`}>{label === key ? status : label}</span>;
-}
-
-function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <div className={`toggle ${checked ? 'on' : ''}`} onClick={() => onChange(!checked)} role="switch" aria-checked={checked}>
-      <div className="toggle-knob" />
-    </div>
-  );
-}
-
 export default function QueueScreen() {
-  const { i18n, t } = useTranslation();
-  const [jobs, setJobs] = useState<ContentItem[]>([]);
-  const [autoPublish, setAutoPublish] = useState(false);
+  const [contents, setContents] = useState<ContentItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  const loadJobs = async () => {
+  const loadContents = async () => {
     setLoading(true);
     setError('');
     try {
-      setJobs(await fetchContents('queued'));
+      setContents(await fetchDeliveredContents(CURRENT_CLIENT_ID));
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('common.error'));
+      setError(err instanceof Error ? err.message : 'Failed to load content');
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    void loadJobs();
+    void loadContents();
   }, []);
 
-  const handlePublish = async (id: string) => {
+  const handlePublish = async (contentId: string) => {
     try {
-      await publishContent(id);
-      await loadJobs();
+      await confirmContent(contentId);
+      setContents((prev) => prev.filter((content) => content.id !== contentId));
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('queue.publishFailed'));
+      setError(err instanceof Error ? err.message : 'Failed to publish content');
     }
   };
 
   return (
     <div className="content-area">
       <div className="topbar">
-        <div className="topbar-title">{t('queue.title')}</div>
+        <div className="topbar-title">Content Queue</div>
         <div className="topbar-badge">
           <span className="status-dot online" />
-          {t('common.connected')}
+          Connected
         </div>
       </div>
 
       <div className="screen-header">
-        <h2>{t('queue.heading')}</h2>
-        <p>
-          {jobs.length} {t('queue.jobsPending')} — {t('queue.autoPublish')} {autoPublish ? t('common.on') : t('common.off')}
-        </p>
+        <h2>Ready To Publish</h2>
+        <p>Review and publish content prepared by your operator.</p>
       </div>
 
-      <div className="auto-publish-bar">
-        <div>
-          <strong>{t('queue.autoPublish')}</strong>
-          <span>{t('queue.autoPublishDesc')}</span>
-        </div>
-        <Toggle checked={autoPublish} onChange={setAutoPublish} />
-      </div>
-
-      <div className="section-label">{t('queue.upcoming')}</div>
+      <div className="section-label">Delivered Content</div>
 
       <div className="queue-list">
         {loading ? (
           <div className="empty-state">
-            <div className="empty-state-title">{t('common.loading')}</div>
+            <div className="empty-state-title">Loading...</div>
           </div>
         ) : error ? (
           <div className="empty-state">
             <div className="empty-state-title">{error}</div>
           </div>
-        ) : jobs.length === 0 ? (
+        ) : contents.length === 0 ? (
           <div className="empty-state">
-            <div className="empty-state-title">{t('queue.emptyTitle')}</div>
-            <div className="empty-state-sub">{t('queue.emptySub')}</div>
+            <div className="empty-state-title">All caught up</div>
+            <div className="empty-state-sub">No new content to review right now.</div>
           </div>
         ) : (
-          jobs.map((job) => (
-            <div key={job.id} className="card">
+          contents.map((content) => (
+            <div key={content.id} className="card">
               <div className="card-header">
                 <div className="thumb">
-                  {job.thumbnailUrl ? (
-                    <img src={job.thumbnailUrl} alt={job.title} />
+                  {content.thumbnailUrl ? (
+                    <img src={content.thumbnailUrl} alt={content.title} />
                   ) : (
                     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <polygon points="5 3 19 12 5 21 5 3" />
@@ -140,23 +93,21 @@ export default function QueueScreen() {
                   )}
                 </div>
                 <div className="card-meta">
-                  <div className="card-title">{job.title}</div>
-                  <div className="card-schedule">{t('queue.scheduledAt')} {formatDate(job.scheduledAt, i18n.language)}</div>
+                  <div className="card-title">{content.title}</div>
+                  {content.description && <div className="card-schedule">{content.description}</div>}
                   <div className="tag-row">
-                    <PlatformTag platform={job.platform} />
-                    <StatusBadge status={job.status} />
+                    <PlatformTag platform={content.platform} />
+                    <span className="tag">{formatDate(content.createdAt || content.updatedAt)}</span>
+                    <span className="status-badge status-approved">Delivered</span>
                   </div>
                 </div>
               </div>
               <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>
-                <button className="btn btn-primary" style={{ flex: 1 }} onClick={() => void handlePublish(job.id)}>
-                  {t('queue.publishNow')}
+                <button className="btn btn-primary" style={{ flex: 1 }} onClick={() => void handlePublish(content.id)}>
+                  Confirm Publish
                 </button>
                 <button className="btn btn-secondary" style={{ flex: 1 }}>
-                  {t('queue.preview')}
-                </button>
-                <button className="btn btn-secondary" style={{ width: 80 }}>
-                  {t('queue.skip')}
+                  Preview
                 </button>
               </div>
             </div>

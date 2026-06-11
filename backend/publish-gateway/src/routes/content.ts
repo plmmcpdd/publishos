@@ -1,23 +1,30 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma';
-import { authenticateUser, AuthRequest } from '../middleware/auth';
 
 const router = Router();
 
 const createContentSchema = z.object({
-  client_id: z.string(),
+  clientId: z.string().optional(),
+  client_id: z.string().optional(),
   title: z.string().min(1).max(200),
   description: z.string().min(1),
   caption: z.string().optional(),
   hashtags: z.array(z.string()).optional(),
-  video_url: z.string().url(),
-  thumbnail_url: z.string().url().optional(),
-  ai_generated: z.boolean().default(false),
+  videoUrl: z.string().optional(),
+  video_url: z.string().optional(),
+  thumbnailUrl: z.string().optional(),
+  thumbnail_url: z.string().optional(),
+  aiGenerated: z.boolean().optional(),
+  ai_generated: z.boolean().optional(),
+  aiTools: z.array(z.string()).optional(),
   ai_tools: z.array(z.string()).optional(),
-  platforms: z.array(z.string()).min(1),
+  platform: z.string().optional(),
+  platforms: z.array(z.string()).optional(),
+  scheduleAt: z.string().datetime().optional(),
   schedule_at: z.string().datetime().optional(),
   metadata: z.record(z.any()).optional(),
+  status: z.enum(['pending_review', 'rejected', 'approved', 'published', 'failed', 'draft', 'delivered']).optional(),
   assets: z.array(z.object({
     type: z.string(),
     source: z.string().optional(),
@@ -26,164 +33,271 @@ const createContentSchema = z.object({
     authorization_doc_url: z.string().url().optional(),
     description: z.string().optional(),
   })).optional(),
+}).refine((data) => data.clientId || data.client_id, {
+  message: 'clientId is required',
 });
 
-router.post('/', authenticateUser, async (req: AuthRequest, res) => {
+function serializeContent(content: any) {
+  return {
+    ...content,
+    platform: firstPlatform(content.platforms),
+    thumbnail_url: content.thumbnailUrl,
+  };
+}
+
+function firstPlatform(value?: string) {
+  if (!value) return 'tiktok';
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) && parsed[0] ? String(parsed[0]) : value;
+  } catch {
+    return value;
+  }
+}
+
+function statusFilter(status?: string) {
+  if (!status || status === 'all') return undefined;
+  const mapped = status.split(',').map((item) => item.trim()).filter(Boolean).flatMap((item) => {
+    if (item === 'queued') return ['pending_review', 'approved'];
+    if (item === 'pending') return ['pending_review'];
+    return [item];
+  });
+
+  return { in: [...new Set(mapped)] as any };
+}
+
+async function writeAudit(data: {
+  action: string;
+  actorId?: string;
+  actorType: string;
+  targetType: string;
+  targetId: string;
+  details?: string;
+}) {
+  await prisma.auditLog.create({
+    data: {
+      action: data.action,
+      actorId: data.actorId || data.actorType,
+      actorType: data.actorType,
+      targetType: data.targetType,
+      targetId: data.targetId,
+      details: data.details,
+    },
+  }).catch(() => {});
+}
+
+router.post('/', async (req, res) => {
   const parse = createContentSchema.safeParse(req.body);
   if (!parse.success) {
-    res.status(422).json({ error: 'Invalid request body', details: parse.error.flatten() });
+    res.status(422).json({ success: false, error: 'Invalid request body', details: parse.error.flatten() });
     return;
   }
 
   const data = parse.data;
-  
-  // Validate client exists
-  const client = await prisma.client.findUnique({ where: { id: data.client_id } });
+  const clientId = data.clientId || data.client_id!;
+  const client = await prisma.client.findUnique({ where: { id: clientId } });
   if (!client) {
-    res.status(404).json({ error: 'Client not found' });
+    res.status(404).json({ success: false, error: 'Client not found' });
     return;
   }
 
-  // Check license chain completeness
-  if (data.assets) {
-    const missingLicense = data.assets.filter(a => 
-      a.type === 'stock_video' && !a.license_id
-    );
-    if (missingLicense.length > 0) {
-      res.status(422).json({ 
-        error: 'License reference required for stock assets',
-        assets: missingLicense.map(a => a.url)
-      });
-      return;
-    }
-  }
+  const platformList = data.platforms?.length ? data.platforms : [data.platform || 'tiktok'];
+  const videoUrl = data.videoUrl || data.video_url || 'mock/video.mp4';
+  const scheduleAt = data.scheduleAt || data.schedule_at;
 
   const content = await prisma.content.create({
     data: {
-      clientId: data.client_id,
+      clientId,
       title: data.title,
       description: data.description,
       caption: data.caption,
       hashtags: JSON.stringify(data.hashtags || []),
-      videoUrl: data.video_url,
-      thumbnailUrl: data.thumbnail_url,
-      aiGenerated: data.ai_generated,
-      aiTools: JSON.stringify(data.ai_tools || []),
-      platforms: JSON.stringify(data.platforms),
-      scheduleAt: data.schedule_at ? new Date(data.schedule_at) : null,
+      videoUrl,
+      thumbnailUrl: data.thumbnailUrl || data.thumbnail_url,
+      aiGenerated: data.aiGenerated ?? data.ai_generated ?? false,
+      aiTools: JSON.stringify(data.aiTools || data.ai_tools || []),
+      platforms: JSON.stringify(platformList),
+      scheduleAt: scheduleAt ? new Date(scheduleAt) : null,
       metadata: data.metadata ? JSON.stringify(data.metadata) : null,
-      status: 'pending_review',
+      status: data.status || 'draft',
       assets: {
-        create: (data.assets || []).map(a => ({
-          type: a.type,
-          source: a.source,
-          licenseId: a.license_id,
-          url: a.url,
-          authorizationDocUrl: a.authorization_doc_url,
-          description: a.description,
-        }))
-      }
+        create: (data.assets || []).map((asset) => ({
+          type: asset.type,
+          source: asset.source,
+          licenseId: asset.license_id,
+          url: asset.url,
+          authorizationDocUrl: asset.authorization_doc_url,
+          description: asset.description,
+        })),
+      },
     },
-    include: { assets: true }
+    include: { assets: true, client: true },
   });
 
-  await prisma.auditLog.create({
-    data: {
-      action: 'create_content',
-      actorId: req.user!.id,
-      actorType: 'user',
-      targetType: 'content',
-      targetId: content.id,
-      details: JSON.stringify({ title: data.title, client_id: data.client_id })
-    }
+  await writeAudit({
+    action: 'create_content',
+    actorType: 'dashboard',
+    targetType: 'content',
+    targetId: content.id,
+    details: JSON.stringify({ title: data.title, clientId }),
   });
 
-  res.status(201).json({
-    content_id: content.id,
-    status: content.status,
-    created_at: content.createdAt,
-    compliance_check: {
-      status: 'pending',
-      checks: ['copyright', 'ai_disclosure', 'platform_policy']
-    }
-  });
+  res.status(201).json({ success: true, data: serializeContent(content) });
 });
 
-router.get('/', authenticateUser, async (req: AuthRequest, res) => {
+router.get('/', async (req, res) => {
   const status = typeof req.query.status === 'string' ? req.query.status : undefined;
-  const clientId = typeof req.query.client_id === 'string' ? req.query.client_id : undefined;
-  
+  const clientId = typeof req.query.clientId === 'string'
+    ? req.query.clientId
+    : typeof req.query.client_id === 'string'
+      ? req.query.client_id
+      : undefined;
+
   const contents = await prisma.content.findMany({
     where: {
-      ...(status && { status: status as any }),
-      ...(clientId && { clientId }),
+      ...(status ? { status: statusFilter(status) } : {}),
+      ...(clientId ? { clientId } : {}),
     },
-    include: { assets: true, publishJobs: { include: { accountBinding: true } } },
+    include: { assets: true, client: true, publishJobs: { include: { accountBinding: true } } },
     orderBy: { createdAt: 'desc' },
-    take: 50,
+    take: 100,
   });
 
-  res.json({ data: contents });
+  res.json({ success: true, data: contents.map(serializeContent) });
 });
 
-router.get('/:id', authenticateUser, async (req: AuthRequest, res) => {
+// Must be registered before /:id.
+router.get('/delivered', async (req, res) => {
+  try {
+    const clientId = typeof req.query.clientId === 'string'
+      ? req.query.clientId
+      : typeof req.query.client_id === 'string'
+        ? req.query.client_id
+        : undefined;
+
+    const contents = await prisma.content.findMany({
+      where: {
+        status: 'delivered',
+        ...(clientId ? { clientId } : {}),
+      },
+      include: { client: true },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    res.json({ success: true, data: contents.map(serializeContent) });
+  } catch (error) {
+    res.status(500).json({ success: false, error: String(error) });
+  }
+});
+
+router.get('/:id', async (req, res) => {
   const content = await prisma.content.findUnique({
-    where: { id: req.params.id as string },
-    include: { assets: true, publishJobs: { include: { accountBinding: true } } }
+    where: { id: req.params.id },
+    include: { assets: true, client: true, publishJobs: { include: { accountBinding: true } } },
   });
-  
+
   if (!content) {
-    res.status(404).json({ error: 'Content not found' });
+    res.status(404).json({ success: false, error: 'Content not found' });
     return;
   }
-  
-  res.json(content);
+
+  res.json({ success: true, data: serializeContent(content) });
 });
 
-router.post('/:id/approve', authenticateUser, async (req: AuthRequest, res) => {
-  const { notes } = req.body;
-  
+router.post('/:id/deliver', async (req, res) => {
+  try {
+    const content = await prisma.content.update({
+      where: { id: req.params.id },
+      data: { status: 'delivered' },
+      include: { client: true },
+    });
+
+    await writeAudit({
+      action: 'delivered',
+      actorType: 'system',
+      targetType: 'content',
+      targetId: content.id,
+      details: 'Delivered to client',
+    });
+
+    res.json({ success: true, data: serializeContent(content) });
+  } catch (error) {
+    res.status(500).json({ success: false, error: String(error) });
+  }
+});
+
+router.post('/:id/confirm', async (req, res) => {
+  try {
+    const content = await prisma.content.update({
+      where: { id: req.params.id },
+      data: { status: 'published' },
+      include: { client: true },
+    });
+
+    await writeAudit({
+      action: 'published',
+      actorType: 'client',
+      targetType: 'content',
+      targetId: content.id,
+      details: 'Confirmed by client',
+    });
+
+    res.json({ success: true, data: serializeContent(content) });
+  } catch (error) {
+    res.status(500).json({ success: false, error: String(error) });
+  }
+});
+
+router.post('/:id/approve', async (req, res) => {
   const content = await prisma.content.update({
-    where: { id: req.params.id as string },
+    where: { id: req.params.id },
     data: { status: 'approved' },
-    include: { assets: true }
+    include: { assets: true, client: true },
   });
 
-  await prisma.auditLog.create({
-    data: {
-      action: 'approve_content',
-      actorId: req.user!.id,
-      actorType: 'user',
-      targetType: 'content',
-      targetId: content.id,
-      details: JSON.stringify({ notes, previous_status: 'pending_review' })
-    }
+  await writeAudit({
+    action: 'approve_content',
+    actorType: 'dashboard',
+    targetType: 'content',
+    targetId: content.id,
+    details: JSON.stringify({ previous_status: 'pending_review' }),
   });
 
-  res.json({ content_id: content.id, status: content.status, approved_at: new Date() });
+  res.json({ success: true, data: serializeContent(content) });
 });
 
-router.post('/:id/reject', authenticateUser, async (req: AuthRequest, res) => {
+router.post('/:id/reject', async (req, res) => {
   const { reason, detail } = req.body;
-  const id = req.params.id as string;
-  
   const content = await prisma.content.update({
-    where: { id },
+    where: { id: req.params.id },
     data: { status: 'rejected' },
+    include: { client: true },
   });
 
-  await prisma.auditLog.create({
-    data: {
-      action: 'reject_content',
-      actorId: req.user!.id,
-      actorType: 'user',
+  await writeAudit({
+    action: 'reject_content',
+    actorType: 'dashboard',
+    targetType: 'content',
+    targetId: content.id,
+    details: JSON.stringify({ reason, detail }),
+  });
+
+  res.json({ success: true, data: serializeContent(content) });
+});
+
+router.delete('/:id', async (req, res) => {
+  try {
+    await prisma.content.delete({ where: { id: req.params.id } });
+    await writeAudit({
+      action: 'delete_content',
+      actorType: 'dashboard',
       targetType: 'content',
-      targetId: content.id,
-      details: JSON.stringify({ reason, detail })
-    }
-  });
-
-  res.json({ content_id: content.id, status: content.status, rejected_at: new Date() });
+      targetId: req.params.id,
+    });
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ success: false, error: String(error) });
+  }
 });
 
 export default router;

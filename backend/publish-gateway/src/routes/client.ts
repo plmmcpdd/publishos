@@ -8,6 +8,15 @@ const PRESIGN_EXPIRY_SECONDS = 900; // 15 minutes
 
 const router = Router();
 
+router.get('/', async (_req, res) => {
+  const clients = await prisma.client.findMany({
+    orderBy: { createdAt: 'desc' },
+    take: 100,
+  });
+
+  res.json({ success: true, data: clients });
+});
+
 // Helper: generate presigned S3 URL (mock - replace with real S3 SDK)
 function generatePresignedUrl(s3Key: string): string {
   // TODO: Replace with actual AWS SDK getSignedUrl
