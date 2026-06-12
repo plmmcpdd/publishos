@@ -13,7 +13,9 @@ const prisma = new PrismaClient({ adapter });
 
 async function main() {
   const password = await bcrypt.hash('password123', 10);
+  const adminPassword = await bcrypt.hash('admin123', 10);
 
+  await prisma.admin.deleteMany();
   await prisma.auditLog.deleteMany();
   await prisma.contentAsset.deleteMany();
   await prisma.jobHistory.deleteMany();
@@ -22,6 +24,10 @@ async function main() {
   await prisma.accountBinding.deleteMany();
   await prisma.device.deleteMany();
   await prisma.client.deleteMany();
+
+  await prisma.admin.create({
+    data: { email: 'admin@publishos.com', password: adminPassword, name: 'Admin' },
+  });
 
   const c1 = await prisma.client.create({
     data: {
@@ -99,7 +105,9 @@ async function main() {
     ],
   });
 
-  console.log('Seed done! Test login: abc@hvac.com / password123');
+  console.log('Seed done!');
+  console.log('Admin: admin@publishos.com / admin123');
+  console.log('Client: abc@hvac.com / password123');
 }
 
 main().catch((error) => {

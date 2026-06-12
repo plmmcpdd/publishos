@@ -14,6 +14,7 @@ export interface ContentItem {
   updatedAt?: string;
   thumbnailUrl?: string;
   thumbnail_url?: string;
+  videoUrl?: string;
   postUrl?: string;
 }
 
@@ -38,6 +39,7 @@ interface ApiContent {
   status: string;
   thumbnailUrl?: string | null;
   thumbnail_url?: string | null;
+  videoUrl?: string | null;
   platformPostUrl?: string | null;
 }
 
@@ -64,6 +66,7 @@ function mapContent(item: ApiContent): ContentItem {
     status: item.status,
     thumbnailUrl: item.thumbnailUrl || item.thumbnail_url || undefined,
     thumbnail_url: item.thumbnail_url || undefined,
+    videoUrl: item.videoUrl || undefined,
     postUrl: item.platformPostUrl || undefined,
   };
 }

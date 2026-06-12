@@ -1,9 +1,11 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import path from 'path';
 
 import contentRoutes from './routes/content';
 import authRoutes from './routes/auth';
+import uploadRoutes from './routes/upload';
 import publishJobRoutes from './routes/publish-jobs';
 import clientRoutes from './routes/client';
 import taskRoutes from './routes/tasks';
@@ -21,6 +23,7 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 app.use(languageMiddleware);
+app.use('/uploads', express.static(path.resolve(__dirname, '../uploads')));
 
 // Health check
 app.get('/health', (_req, res) => {
@@ -29,6 +32,8 @@ app.get('/health', (_req, res) => {
 });
 
 // API routes
+app.use('/v1', authRoutes);
+app.use('/v1', uploadRoutes);
 app.use('/v1/auth', authRoutes);
 app.use('/v1/content', contentRoutes);
 app.use('/v1/publish-jobs', publishJobRoutes);

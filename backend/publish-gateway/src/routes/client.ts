@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { prisma } from '../lib/prisma';
 import { authenticateDevice, AuthRequest } from '../middleware/auth';
@@ -10,11 +11,38 @@ const router = Router();
 
 router.get('/', async (_req, res) => {
   const clients = await prisma.client.findMany({
+    select: { id: true, name: true, email: true, industry: true, active: true, createdAt: true, updatedAt: true },
     orderBy: { createdAt: 'desc' },
     take: 100,
   });
 
   res.json({ success: true, data: clients });
+});
+
+router.post('/', async (req, res) => {
+  try {
+    const { name, email, password, industry } = req.body;
+    if (!name || !email || !password) {
+      res.status(400).json({ success: false, error: 'Name, email, password required' });
+      return;
+    }
+
+    const existing = await prisma.client.findUnique({ where: { email } });
+    if (existing) {
+      res.status(409).json({ success: false, error: 'Email already exists' });
+      return;
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const client = await prisma.client.create({
+      data: { name, email, password: hashedPassword, industry },
+      select: { id: true, name: true, email: true, industry: true, active: true, createdAt: true, updatedAt: true },
+    });
+
+    res.json({ success: true, data: client });
+  } catch (error) {
+    res.status(500).json({ success: false, error: String(error) });
+  }
 });
 
 // Helper: generate presigned S3 URL (mock - replace with real S3 SDK)
@@ -32,6 +60,52 @@ router.get('/list', async (_req, res) => {
     orderBy: { name: 'asc' },
   });
   res.json({ data: clients });
+});
+
+router.put('/:id', async (req, res) => {
+  try {
+    const { name, email, industry, active } = req.body;
+    const data: { name?: string; email?: string; industry?: string; active?: boolean } = {};
+    if (name) data.name = name;
+    if (email) data.email = email;
+    if (industry !== undefined) data.industry = industry;
+    if (active !== undefined) data.active = active;
+
+    const client = await prisma.client.update({
+      where: { id: req.params.id },
+      data,
+      select: { id: true, name: true, email: true, industry: true, active: true, createdAt: true, updatedAt: true },
+    });
+
+    res.json({ success: true, data: client });
+  } catch (error) {
+    res.status(500).json({ success: false, error: String(error) });
+  }
+});
+
+router.put('/:id/password', async (req, res) => {
+  try {
+    const { password } = req.body;
+    if (!password) {
+      res.status(400).json({ success: false, error: 'Password required' });
+      return;
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    await prisma.client.update({ where: { id: req.params.id }, data: { password: hashedPassword } });
+    res.json({ success: true, message: 'Password updated' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: String(error) });
+  }
+});
+
+router.delete('/:id', async (req, res) => {
+  try {
+    await prisma.client.delete({ where: { id: req.params.id } });
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ success: false, error: String(error) });
+  }
 });
 
 // POST /client/register - device registration (called by Electron app on first run)

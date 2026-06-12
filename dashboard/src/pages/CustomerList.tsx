@@ -1,52 +1,151 @@
 import { useEffect, useState } from 'react';
-import { fetchClients } from '../api';
+import { createClient, deleteClient, fetchClients, resetClientPassword, updateClient } from '../api';
 import type { Client } from '../api';
 
+const emptyForm = { name: '', email: '', password: '', industry: '' };
+
 export default function CustomerList() {
-  const [customers, setCustomers] = useState<Client[]>([]);
+  const [clients, setClients] = useState<Client[]>([]);
+  const [showCreate, setShowCreate] = useState(false);
+  const [editing, setEditing] = useState<Client | null>(null);
+  const [form, setForm] = useState(emptyForm);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  const loadClients = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      setClients(await fetchClients());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '加载客户失败');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    fetchClients()
-      .then(setCustomers)
-      .finally(() => setLoading(false));
+    void loadClients();
   }, []);
+
+  const resetForm = () => {
+    setShowCreate(false);
+    setEditing(null);
+    setForm(emptyForm);
+  };
+
+  const handleCreate = async () => {
+    try {
+      await createClient(form);
+      resetForm();
+      await loadClients();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '创建客户失败');
+    }
+  };
+
+  const handleUpdate = async () => {
+    if (!editing) return;
+    try {
+      await updateClient(editing.id, { name: form.name, email: form.email, industry: form.industry });
+      resetForm();
+      await loadClients();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '更新客户失败');
+    }
+  };
+
+  const handleResetPassword = async (id: string) => {
+    const password = prompt('New password:');
+    if (!password) return;
+    await resetClientPassword(id, password);
+    alert('Password updated');
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!confirm('Delete this client?')) return;
+    await deleteClient(id);
+    await loadClients();
+  };
 
   return (
     <div>
-      <h3 className="text-lg font-medium mb-4">客户列表</h3>
-      <div className="bg-white rounded-xl shadow-sm overflow-hidden">
-        <table className="w-full">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="px-6 py-3 text-left text-sm font-medium text-gray-500">客户</th>
-              <th className="px-6 py-3 text-left text-sm font-medium text-gray-500">行业</th>
-              <th className="px-6 py-3 text-left text-sm font-medium text-gray-500">状态</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-100">
-            {loading ? (
-              <tr>
-                <td colSpan={3} className="px-6 py-8 text-center text-gray-500">加载中...</td>
-              </tr>
-            ) : customers.length === 0 ? (
-              <tr>
-                <td colSpan={3} className="px-6 py-8 text-center text-gray-500">暂无客户</td>
-              </tr>
-            ) : (
-              customers.map((customer) => (
-                <tr key={customer.id}>
-                  <td className="px-6 py-4 text-sm font-medium">{customer.name}</td>
-                  <td className="px-6 py-4 text-sm text-gray-500">{customer.industry || '-'}</td>
-                  <td className="px-6 py-4">
-                    <span className={`w-2 h-2 rounded-full inline-block mr-2 ${customer.active ? 'bg-green-500' : 'bg-gray-400'}`} />
-                    {customer.active ? '活跃' : '暂停'}
-                  </td>
-                </tr>
-              ))
+      <div className="flex items-center justify-between mb-6">
+        <h3 className="text-lg font-medium">客户管理</h3>
+        <button
+          type="button"
+          onClick={() => {
+            setShowCreate((value) => !value);
+            setEditing(null);
+            setForm(emptyForm);
+          }}
+          className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg"
+        >
+          + New Client
+        </button>
+      </div>
+
+      {error && <div className="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
+
+      {(showCreate || editing) && (
+        <div className="bg-gray-50 rounded-lg p-6 mb-6 border border-gray-200">
+          <h4 className="text-lg font-semibold mb-4">{editing ? 'Edit Client' : 'New Client'}</h4>
+          <div className="grid grid-cols-2 gap-4">
+            <input placeholder="Business Name" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} className="border rounded px-3 py-2" />
+            <input placeholder="Industry" value={form.industry} onChange={(event) => setForm({ ...form, industry: event.target.value })} className="border rounded px-3 py-2" />
+            <input placeholder="Email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} className="border rounded px-3 py-2" />
+            {!editing && (
+              <input type="password" placeholder="Password" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} className="border rounded px-3 py-2" />
             )}
-          </tbody>
-        </table>
+          </div>
+          <div className="flex gap-3 mt-4">
+            <button onClick={() => void (editing ? handleUpdate() : handleCreate())} className="px-4 py-2 bg-green-600 hover:bg-green-500 text-white rounded-lg">
+              {editing ? 'Save' : 'Create'}
+            </button>
+            <button onClick={resetForm} className="px-4 py-2 bg-gray-300 hover:bg-gray-400 rounded-lg">
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className="bg-white rounded-xl shadow-sm overflow-hidden">
+        {loading ? (
+          <div className="px-6 py-8 text-center text-gray-500">Loading...</div>
+        ) : clients.length === 0 ? (
+          <div className="px-6 py-8 text-center text-gray-500">暂无客户</div>
+        ) : (
+          <div className="divide-y divide-gray-100">
+            {clients.map((client) => (
+              <div key={client.id} className="p-4 flex items-center justify-between">
+                <div>
+                  <h4 className="font-medium">{client.name}</h4>
+                  <p className="text-sm text-gray-500">
+                    {client.email} / {client.industry || '-'} / {client.active ? 'Active' : 'Inactive'}
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => {
+                      setEditing(client);
+                      setShowCreate(false);
+                      setForm({ name: client.name, email: client.email, password: '', industry: client.industry || '' });
+                    }}
+                    className="px-3 py-1 bg-gray-200 hover:bg-gray-300 rounded text-sm"
+                  >
+                    Edit
+                  </button>
+                  <button onClick={() => void handleResetPassword(client.id)} className="px-3 py-1 bg-yellow-100 hover:bg-yellow-200 text-yellow-800 rounded text-sm">
+                    Reset Pass
+                  </button>
+                  <button onClick={() => void handleDelete(client.id)} className="px-3 py-1 bg-red-600 hover:bg-red-500 text-white rounded text-sm">
+                    Delete
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

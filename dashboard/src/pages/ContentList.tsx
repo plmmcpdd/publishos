@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { createContent, deleteContent, deliverContent, fetchClients, fetchContents, firstPlatform } from '../api';
+import { createContent, deleteContent, deliverContent, fetchClients, fetchContents, firstPlatform, uploadVideo } from '../api';
 import type { Client, ContentItem } from '../api';
 
 const emptyContent = {
@@ -83,6 +83,16 @@ export default function ContentList() {
     await loadContents();
   };
 
+  const handleVideoUpload = async (file?: File) => {
+    if (!file) return;
+    try {
+      const uploaded = await uploadVideo(file);
+      setNewContent((value) => ({ ...value, videoUrl: uploaded.url }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Upload failed');
+    }
+  };
+
   const filtered = filter === 'all' ? contents : contents.filter((content) => content.status === filter);
 
   return (
@@ -122,12 +132,27 @@ export default function ContentList() {
               className="border rounded px-3 py-2 col-span-2"
               rows={3}
             />
-            <input
-              placeholder="Video URL"
-              value={newContent.videoUrl}
-              onChange={(event) => setNewContent({ ...newContent, videoUrl: event.target.value })}
-              className="border rounded px-3 py-2"
-            />
+            <div className="col-span-2">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Video</label>
+              <div className="flex gap-3">
+                <input
+                  placeholder="Video URL"
+                  value={newContent.videoUrl}
+                  onChange={(event) => setNewContent({ ...newContent, videoUrl: event.target.value })}
+                  className="border rounded px-3 py-2 flex-1"
+                />
+                <span className="self-center text-gray-400">or</span>
+                <label className="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded cursor-pointer text-sm self-center">
+                  Upload
+                  <input
+                    type="file"
+                    accept="video/*"
+                    className="hidden"
+                    onChange={(event) => void handleVideoUpload(event.target.files?.[0])}
+                  />
+                </label>
+              </div>
+            </div>
             <input
               placeholder="Thumbnail URL"
               value={newContent.thumbnailUrl}

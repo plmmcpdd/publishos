@@ -4,7 +4,7 @@ const navItems = [
   { path: '/', label: '概览', icon: '01' },
   { path: '/review', label: '审核流', icon: '02' },
   { path: '/contents', label: '内容管理', icon: '03' },
-  { path: '/customers', label: '客户列表', icon: '04' },
+  { path: '/customers', label: '客户管理', icon: '04' },
   { path: '/monitor', label: '系统监控', icon: '05' },
   { path: '/audit', label: '审计日志', icon: '06' },
   { path: '/settings', label: '设置', icon: '07' },
@@ -16,6 +16,8 @@ export default function Layout() {
 
   const logout = () => {
     localStorage.removeItem('dashboard_auth');
+    localStorage.removeItem('adminToken');
+    localStorage.removeItem('adminName');
     window.location.reload();
   };
 
