@@ -4,7 +4,6 @@ const DEFAULT_SERVER = 'http://104.238.181.32:3000/v1';
 // Priority: localStorage (Settings page) > build-time VITE_API_URL > DEFAULT_SERVER > auto-detect > fallback
 const STORAGE_KEY = 'publishos_backend_url';
 const BUILD_URL = import.meta.env.VITE_API_URL || '';
-const FALLBACK_URL = 'http://localhost:3000/v1';
 
 function getApiBase(): string {
   // 1. User-configured URL (from Settings page)
