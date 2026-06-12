@@ -3,6 +3,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 
 import contentRoutes from './routes/content';
+import authRoutes from './routes/auth';
 import publishJobRoutes from './routes/publish-jobs';
 import clientRoutes from './routes/client';
 import taskRoutes from './routes/tasks';
@@ -28,6 +29,7 @@ app.get('/health', (_req, res) => {
 });
 
 // API routes
+app.use('/v1/auth', authRoutes);
 app.use('/v1/content', contentRoutes);
 app.use('/v1/publish-jobs', publishJobRoutes);
 app.use('/v1/client', clientRoutes);

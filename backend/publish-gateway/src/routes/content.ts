@@ -73,6 +73,7 @@ async function writeAudit(data: {
   targetType: string;
   targetId: string;
   details?: string;
+  deviceId?: string | null;
 }) {
   await prisma.auditLog.create({
     data: {
@@ -82,6 +83,7 @@ async function writeAudit(data: {
       targetType: data.targetType,
       targetId: data.targetId,
       details: data.details,
+      deviceId: data.deviceId || null,
     },
   }).catch(() => {});
 }
@@ -228,6 +230,18 @@ router.post('/:id/deliver', async (req, res) => {
 
 router.post('/:id/confirm', async (req, res) => {
   try {
+    const { clientId, deviceId } = req.body;
+    if (!clientId) {
+      res.status(400).json({ success: false, error: 'clientId is required' });
+      return;
+    }
+
+    const existing = await prisma.content.findUnique({ where: { id: req.params.id } });
+    if (!existing || existing.clientId !== clientId) {
+      res.status(403).json({ success: false, error: 'Not your content' });
+      return;
+    }
+
     const content = await prisma.content.update({
       where: { id: req.params.id },
       data: { status: 'published' },
@@ -239,7 +253,9 @@ router.post('/:id/confirm', async (req, res) => {
       actorType: 'client',
       targetType: 'content',
       targetId: content.id,
-      details: 'Confirmed by client',
+      actorId: clientId,
+      deviceId,
+      details: `Published by client ${clientId}`,
     });
 
     res.json({ success: true, data: serializeContent(content) });

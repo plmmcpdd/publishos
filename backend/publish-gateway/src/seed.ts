@@ -1,4 +1,5 @@
 import { prisma } from './lib/prisma';
+import bcrypt from 'bcryptjs';
 
 const mockTitles = [
   'HVAC Summer Tips',
@@ -12,6 +13,7 @@ function thumbnail(background: string, label: string) {
 }
 
 async function seed() {
+  const password = await bcrypt.hash('password123', 10);
   let client = await prisma.client.findFirst({
     where: { name: 'PublishOS Demo Client' },
   });
@@ -21,6 +23,8 @@ async function seed() {
       data: {
         name: 'PublishOS Demo Client',
         industry: 'home services',
+        email: 'demo@publishos.com',
+        password,
       },
     });
   }

@@ -11,6 +11,8 @@ model Client {
   name            String
   industry        String?
   active          Boolean          @default(true)
+  email           String           @unique
+  password        String
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
   accountBindings AccountBinding[]
@@ -137,11 +139,12 @@ model Device {
 model AuditLog {
   id          String   @id @default(cuid())
   action      String   // create_content, approve_content, publish_job, etc.
-  actorId     String   // who did it
+  actorId     String?  // who did it
   actorType   String   // user, system, client_app
   targetType  String   // content, publish_job, account
   targetId    String
   details     String?
+  deviceId    String?
   ipAddress   String?
   createdAt   DateTime @default(now())
 }

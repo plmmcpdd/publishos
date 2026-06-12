@@ -2,6 +2,7 @@ require('dotenv/config');
 const { PrismaClient } = require('@prisma/client');
 const { PrismaBetterSqlite3 } = require('@prisma/adapter-better-sqlite3');
 const { PrismaPg } = require('@prisma/adapter-pg');
+const bcrypt = require('bcryptjs');
 
 const databaseUrl = process.env.DATABASE_URL || 'file:./dev.db';
 const adapter = databaseUrl.startsWith('file:')
@@ -11,6 +12,8 @@ const adapter = databaseUrl.startsWith('file:')
 const prisma = new PrismaClient({ adapter });
 
 async function main() {
+  const password = await bcrypt.hash('password123', 10);
+
   await prisma.auditLog.deleteMany();
   await prisma.contentAsset.deleteMany();
   await prisma.jobHistory.deleteMany();
@@ -20,9 +23,31 @@ async function main() {
   await prisma.device.deleteMany();
   await prisma.client.deleteMany();
 
-  const c1 = await prisma.client.create({ data: { id: 'demo-client-1', name: 'ABC HVAC Services', industry: 'HVAC' } });
-  const c2 = await prisma.client.create({ data: { name: 'CoolBreeze AC Repair', industry: 'HVAC' } });
-  const c3 = await prisma.client.create({ data: { name: 'TotalHome Plumbing', industry: 'Plumbing' } });
+  const c1 = await prisma.client.create({
+    data: {
+      id: 'demo-client-1',
+      name: 'ABC HVAC Services',
+      industry: 'HVAC',
+      email: 'abc@hvac.com',
+      password,
+    },
+  });
+  const c2 = await prisma.client.create({
+    data: {
+      name: 'CoolBreeze AC Repair',
+      industry: 'HVAC',
+      email: 'cool@ac.com',
+      password,
+    },
+  });
+  const c3 = await prisma.client.create({
+    data: {
+      name: 'TotalHome Plumbing',
+      industry: 'Plumbing',
+      email: 'total@plumbing.com',
+      password,
+    },
+  });
 
   await prisma.content.createMany({
     data: [
@@ -74,7 +99,7 @@ async function main() {
     ],
   });
 
-  console.log('Seed done!');
+  console.log('Seed done! Test login: abc@hvac.com / password123');
 }
 
 main().catch((error) => {

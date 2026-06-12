@@ -17,28 +17,15 @@ export interface ContentItem {
   postUrl?: string;
 }
 
-export interface ClientItem {
-  id: string;
-  name: string;
-  industry?: string;
+export interface ClientSession {
+  token: string;
+  client: {
+    id: string;
+    name: string;
+    industry?: string;
+  };
 }
 
-// ---- Client ID management ----
-const CLIENT_ID_KEY = 'publishos_client_id';
-
-export function getClientId(): string | null {
-  return localStorage.getItem(CLIENT_ID_KEY);
-}
-
-export function setClientId(id: string): void {
-  localStorage.setItem(CLIENT_ID_KEY, id);
-}
-
-export function clearClientId(): void {
-  localStorage.removeItem(CLIENT_ID_KEY);
-}
-
-// ---- API helpers ----
 interface ApiContent {
   id: string;
   title: string;
@@ -81,59 +68,81 @@ function mapContent(item: ApiContent): ContentItem {
   };
 }
 
+function requireClientId() {
+  const clientId = localStorage.getItem('clientId');
+  if (!clientId) throw new Error('Please sign in again');
+  return clientId;
+}
+
+function requireDeviceId() {
+  let deviceId = localStorage.getItem('deviceId');
+  if (!deviceId) {
+    deviceId = `device-${Math.random().toString(36).slice(2, 11)}`;
+    localStorage.setItem('deviceId', deviceId);
+  }
+  return deviceId;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const token = localStorage.getItem('token');
+  const headers = new Headers(init?.headers);
+  if (!headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
+
   const response = await fetch(`${api.base}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
     ...init,
+    headers,
   });
 
   if (!response.ok) {
-    throw new Error(`API ${response.status}`);
+    let message = `API ${response.status}`;
+    try {
+      const data = await response.json();
+      message = data.error || message;
+    } catch {
+      // Keep the status-based message.
+    }
+    throw new Error(message);
   }
 
   return response.json() as Promise<T>;
 }
 
-// ---- Public API ----
-
-export async function fetchClients(): Promise<ClientItem[]> {
-  const data = await request<{ data: ClientItem[] }>('/client/list');
+export async function loginClient(email: string, password: string): Promise<ClientSession> {
+  const data = await request<{ success: boolean; data: ClientSession; error?: string }>('/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({ email, password }),
+  });
+  if (!data.success) {
+    throw new Error(data.error || 'Login failed');
+  }
   return data.data;
 }
 
-export async function fetchContents(status: string): Promise<ContentItem[]> {
-  const clientId = getClientId();
-  if (!clientId) throw new Error('No client selected');
-  const data = await request<{ data: ApiContent[] }>(
-    `/contents?status=${encodeURIComponent(status)}&client_id=${encodeURIComponent(clientId)}`
-  );
-  return data.data.map(mapContent);
-}
-
 export async function fetchDeliveredContents(): Promise<ContentItem[]> {
-  const clientId = getClientId();
-  if (!clientId) throw new Error('No client selected');
+  const clientId = requireClientId();
   const data = await request<{ success: boolean; data: ApiContent[] }>(
-    `/content/delivered?clientId=${encodeURIComponent(clientId)}`
+    `/content/delivered?clientId=${encodeURIComponent(clientId)}`,
   );
   return data.data.map(mapContent);
 }
 
 export async function confirmContent(id: string): Promise<ContentItem> {
-  const data = await request<{ success: boolean; data: ApiContent }>(`/content/${id}/confirm`, { method: 'POST' });
-  return mapContent(data.data);
-}
-
-export async function publishContent(id: string): Promise<ContentItem> {
-  const data = await request<{ data: ApiContent }>(`/contents/${id}/publish`, { method: 'POST' });
+  const data = await request<{ success: boolean; data: ApiContent }>(`/content/${id}/confirm`, {
+    method: 'POST',
+    body: JSON.stringify({ clientId: requireClientId(), deviceId: requireDeviceId() }),
+  });
   return mapContent(data.data);
 }
 
 export async function fetchClientHistory(): Promise<ContentItem[]> {
-  const clientId = getClientId();
-  if (!clientId) throw new Error('No client selected');
+  const clientId = requireClientId();
   const data = await request<{ success: boolean; data: ApiContent[] }>(
-    `/content?clientId=${encodeURIComponent(clientId)}`
+    `/content?clientId=${encodeURIComponent(clientId)}`,
   );
   return data.data.map(mapContent).filter((item) => item.status === 'published' || item.status === 'rejected');
 }
