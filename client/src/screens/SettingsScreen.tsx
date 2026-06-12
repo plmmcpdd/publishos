@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { api, checkServerConnection } from '../api';
 
 interface Account {
   id: string;
@@ -35,6 +36,8 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean
 
 export default function SettingsScreen() {
   const { t, i18n } = useTranslation();
+  const [backendUrl, setBackendUrl] = useState(api.base);
+  const [connStatus, setConnStatus] = useState<'connected' | 'failed' | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([
     { id: '1', platform: 'tiktok', username: '@acme_hvac', connected: true },
     { id: '2', platform: 'instagram', username: '@acme_hvac', connected: false },
@@ -135,7 +138,29 @@ export default function SettingsScreen() {
             <div className="setting-label">{t('settings.backendUrl')}</div>
             <div className="setting-desc">{t('settings.backendUrlDesc')}</div>
           </div>
-          <input type="text" defaultValue="http://localhost:3000" style={{ width: 200, textAlign: 'right' }} />
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            <input
+              type="text"
+              value={backendUrl}
+              onChange={(e) => setBackendUrl(e.target.value)}
+              style={{ width: 200, textAlign: 'right' }}
+            />
+            <button
+              onClick={async () => {
+                api.setBase(backendUrl);
+                const result = await checkServerConnection();
+                setConnStatus(result.ok ? 'connected' : 'failed');
+                setTimeout(() => setConnStatus(null), 3000);
+              }}
+              style={{
+                padding: '6px 10px', borderRadius: 6, border: 'none',
+                background: connStatus === 'connected' ? '#059669' : connStatus === 'failed' ? '#dc2626' : 'var(--accent-primary)',
+                color: '#fff', fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap',
+              }}
+            >
+              {connStatus === 'connected' ? '✓ OK' : connStatus === 'failed' ? '✗ Fail' : 'Test'}
+            </button>
+          </div>
         </div>
         <div className="setting-row">
           <div>

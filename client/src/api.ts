@@ -1,5 +1,27 @@
+// ---- Server URL management ----
+// Priority: localStorage > build-time env > auto-detect > fallback
+const STORAGE_KEY = 'publishos_backend_url';
+const BUILD_URL = import.meta.env.VITE_API_URL || '';
+const FALLBACK_URL = 'http://localhost:3000/v1';
+
+function getApiBase(): string {
+  // 1. User-configured URL (from Settings page)
+  const saved = localStorage.getItem(STORAGE_KEY);
+  if (saved) return saved;
+  // 2. Build-time URL (VITE_API_URL)
+  if (BUILD_URL) return BUILD_URL;
+  // 3. Auto-detect: assume server is on same host, port 3000
+  if (typeof window !== 'undefined' && window.location.hostname) {
+    return `http://${window.location.hostname}:3000/v1`;
+  }
+  // 4. Fallback
+  return FALLBACK_URL;
+}
+
 export const api = {
-  base: import.meta.env.VITE_API_URL || 'http://localhost:3000/v1',
+  get base() { return getApiBase(); },
+  setBase(url: string) { localStorage.setItem(STORAGE_KEY, url); },
+  resetBase() { localStorage.removeItem(STORAGE_KEY); },
 };
 
 export interface ContentItem {
@@ -113,6 +135,18 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   return response.json() as Promise<T>;
+}
+
+// ---- Public API ----
+
+export async function checkServerConnection(): Promise<{ ok: boolean; url: string }> {
+  try {
+    const res = await fetch(`${api.base}/../health`.replace('/v1/../', '/'), { signal: AbortSignal.timeout(3000) });
+    const data = await res.json();
+    return { ok: data.status === 'ok', url: api.base };
+  } catch {
+    return { ok: false, url: api.base };
+  }
 }
 
 export async function loginClient(email: string, password: string): Promise<ClientSession> {
