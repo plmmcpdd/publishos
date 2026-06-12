@@ -86,7 +86,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export async function adminLogin(email: string, password: string): Promise<AdminSession> {
-  const data = await request<{ success: boolean; data: AdminSession; error?: string }>('/admin/login', {
+  const data = await request<{ success: boolean; data: AdminSession; error?: string }>('/auth/admin/login', {
     method: 'POST',
     body: JSON.stringify({ email, password }),
   });
