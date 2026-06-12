@@ -32,7 +32,7 @@ app.get('/health', (_req, res) => {
 });
 
 // API routes
-app.use('/v1', authRoutes);
+app.use('/v1/auth', authRoutes);
 app.use('/v1', uploadRoutes);
 app.use('/v1/content', contentRoutes);
 app.use('/v1/publish-jobs', publishJobRoutes);
