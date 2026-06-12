@@ -62,52 +62,6 @@ router.get('/list', async (_req, res) => {
   res.json({ data: clients });
 });
 
-router.put('/:id', async (req, res) => {
-  try {
-    const { name, email, industry, active } = req.body;
-    const data: { name?: string; email?: string; industry?: string; active?: boolean } = {};
-    if (name) data.name = name;
-    if (email) data.email = email;
-    if (industry !== undefined) data.industry = industry;
-    if (active !== undefined) data.active = active;
-
-    const client = await prisma.client.update({
-      where: { id: req.params.id },
-      data,
-      select: { id: true, name: true, email: true, industry: true, active: true, createdAt: true, updatedAt: true },
-    });
-
-    res.json({ success: true, data: client });
-  } catch (error) {
-    res.status(500).json({ success: false, error: String(error) });
-  }
-});
-
-router.put('/:id/password', async (req, res) => {
-  try {
-    const { password } = req.body;
-    if (!password) {
-      res.status(400).json({ success: false, error: 'Password required' });
-      return;
-    }
-
-    const hashedPassword = await bcrypt.hash(password, 10);
-    await prisma.client.update({ where: { id: req.params.id }, data: { password: hashedPassword } });
-    res.json({ success: true, message: 'Password updated' });
-  } catch (error) {
-    res.status(500).json({ success: false, error: String(error) });
-  }
-});
-
-router.delete('/:id', async (req, res) => {
-  try {
-    await prisma.client.delete({ where: { id: req.params.id } });
-    res.json({ success: true });
-  } catch (error) {
-    res.status(500).json({ success: false, error: String(error) });
-  }
-});
-
 // POST /client/register - device registration (called by Electron app on first run)
 router.post('/register', async (req, res) => {
   const { device_id, client_id, capabilities } = req.body;
@@ -229,6 +183,55 @@ router.post('/heartbeat', authenticateDevice, async (req: AuthRequest, res) => {
   });
 
   res.json({ ok: true, timestamp: new Date().toISOString() });
+});
+
+// PUT /client/:id — update client
+router.put('/:id', async (req, res) => {
+  try {
+    const { name, email, industry, active } = req.body;
+    const data: { name?: string; email?: string; industry?: string; active?: boolean } = {};
+    if (name) data.name = name;
+    if (email) data.email = email;
+    if (industry !== undefined) data.industry = industry;
+    if (active !== undefined) data.active = active;
+
+    const client = await prisma.client.update({
+      where: { id: req.params.id },
+      data,
+      select: { id: true, name: true, email: true, industry: true, active: true, createdAt: true, updatedAt: true },
+    });
+
+    res.json({ success: true, data: client });
+  } catch (error) {
+    res.status(500).json({ success: false, error: String(error) });
+  }
+});
+
+// PUT /client/:id/password — reset password
+router.put('/:id/password', async (req, res) => {
+  try {
+    const { password } = req.body;
+    if (!password) {
+      res.status(400).json({ success: false, error: 'Password required' });
+      return;
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    await prisma.client.update({ where: { id: req.params.id }, data: { password: hashedPassword } });
+    res.json({ success: true, message: 'Password updated' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: String(error) });
+  }
+});
+
+// DELETE /client/:id — delete client
+router.delete('/:id', async (req, res) => {
+  try {
+    await prisma.client.delete({ where: { id: req.params.id } });
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ success: false, error: String(error) });
+  }
 });
 
 export default router;
