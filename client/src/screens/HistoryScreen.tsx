@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ContentItem, fetchClientHistory } from '../api';
+import { api, ContentItem, fetchClientHistory } from '../api';
 
 function formatDate(value?: string) {
   if (!value) return '';
@@ -19,6 +19,14 @@ function PlatformTag({ platform }: { platform: string }) {
 function StatusBadge({ status }: { status: string }) {
   const label = status === 'published' ? 'Published' : 'Rejected';
   return <span className={`status-badge ${status === 'published' ? 'status-published' : 'status-rejected'}`}>{label}</span>;
+}
+
+function resolveMediaUrl(url: string | null | undefined): string | null {
+  if (!url) return null;
+  if (url.startsWith('http') || url.startsWith('data:')) return url;
+  const base = import.meta.env.VITE_API_URL || api.base || 'http://localhost:3000';
+  const serverBase = base.replace('/v1', '');
+  return `${serverBase}${url.startsWith('/') ? '' : '/'}${url}`;
 }
 
 export default function HistoryScreen() {
@@ -76,8 +84,14 @@ export default function HistoryScreen() {
             <div key={item.id} className="card">
               <div className="card-header">
                 <div className="thumb">
-                  {item.thumbnailUrl ? (
-                    <img src={item.thumbnailUrl} alt={item.title} />
+                  {item.thumbnailUrl && resolveMediaUrl(item.thumbnailUrl) ? (
+                    <img
+                      src={resolveMediaUrl(item.thumbnailUrl) || undefined}
+                      alt={item.title}
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).style.display = 'none';
+                      }}
+                    />
                   ) : item.status === 'published' ? (
                     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#059669" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <polyline points="20 6 9 17 4 12" />

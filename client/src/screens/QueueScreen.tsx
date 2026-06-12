@@ -27,9 +27,15 @@ function PlatformTag({ platform }: { platform: string }) {
 }
 
 function assetUrl(value?: string) {
-  if (!value) return '';
-  if (/^https?:\/\//.test(value) || value.startsWith('data:')) return value;
-  return `${api.base.replace('/v1', '')}${value}`;
+  return resolveMediaUrl(value) || '';
+}
+
+function resolveMediaUrl(url: string | null | undefined): string | null {
+  if (!url) return null;
+  if (url.startsWith('http') || url.startsWith('data:')) return url;
+  const base = import.meta.env.VITE_API_URL || api.base || 'http://localhost:3000';
+  const serverBase = base.replace('/v1', '');
+  return `${serverBase}${url.startsWith('/') ? '' : '/'}${url}`;
 }
 
 export default function QueueScreen() {
@@ -99,8 +105,14 @@ export default function QueueScreen() {
             <div key={content.id} className="card">
               <div className="card-header">
                 <div className="thumb">
-                  {content.thumbnailUrl ? (
-                    <img src={content.thumbnailUrl} alt={content.title} />
+                  {content.thumbnailUrl && resolveMediaUrl(content.thumbnailUrl) ? (
+                    <img
+                      src={assetUrl(content.thumbnailUrl)}
+                      alt={content.title}
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).style.display = 'none';
+                      }}
+                    />
                   ) : (
                     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <polygon points="5 3 19 12 5 21 5 3" />
@@ -120,16 +132,35 @@ export default function QueueScreen() {
               {content.videoUrl ? (
                 <div style={{ margin: '14px 0' }}>
                   <ErrorBoundary>
-                    <video
-                      controls
-                      src={assetUrl(content.videoUrl)}
-                      style={{ width: '100%', maxHeight: 260, borderRadius: 12 }}
-                      onError={(e) => { (e.target as HTMLVideoElement).style.display = 'none'; }}
-                    />
+                    {(() => {
+                      const src = resolveMediaUrl(content.videoUrl);
+                      return src ? (
+                        <video
+                          controls
+                          src={src}
+                          style={{ width: '100%', maxHeight: 260, borderRadius: 12 }}
+                          onError={(e) => {
+                            (e.target as HTMLVideoElement).style.display = 'none';
+                          }}
+                        />
+                      ) : null;
+                    })()}
                   </ErrorBoundary>
                 </div>
               ) : content.thumbnailUrl ? (
-                <img src={assetUrl(content.thumbnailUrl)} alt={content.title} style={{ width: '100%', maxHeight: 220, objectFit: 'cover', borderRadius: 12, margin: '14px 0' }} />
+                (() => {
+                  const src = resolveMediaUrl(content.thumbnailUrl);
+                  return src ? (
+                    <img
+                      src={src}
+                      alt={content.title}
+                      style={{ width: '100%', maxHeight: 220, objectFit: 'cover', borderRadius: 12, margin: '14px 0' }}
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).style.display = 'none';
+                      }}
+                    />
+                  ) : null;
+                })()
               ) : null}
               <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>
                 <button className="btn btn-primary" style={{ flex: 1 }} onClick={() => void handlePublish(content.id)}>
