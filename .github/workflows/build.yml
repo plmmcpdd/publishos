@@ -17,7 +17,6 @@ jobs:
         with:
           node-version: 20
       - run: cd client && npm install
-      - run: cd client && npm run build
       - name: Build Windows
         if: matrix.os == 'windows-latest'
         run: cd client && npm run build:win
@@ -29,3 +28,25 @@ jobs:
         with:
           name: publishos-${{ matrix.os }}
           path: client/release/
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: "PublishOS Build ${{ github.run_number }}"
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            artifacts/publishos-windows-latest/**/*.exe
+            artifacts/publishos-macos-latest/**/*.dmg

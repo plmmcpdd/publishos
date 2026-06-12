@@ -33,7 +33,7 @@
     "vite-plugin-electron-renderer": "^0.14.7"
   },
   "build": {
-    "appId": "com.publishos.client",
+    "appId": "com.publishos.app",
     "productName": "PublishOS",
     "directories": {
       "output": "release"
@@ -46,8 +46,12 @@
       "target": "dmg"
     },
     "win": {
-      "target": "dir",
+      "target": "nsis",
       "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
     }
   }
 }
