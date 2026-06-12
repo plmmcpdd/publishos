@@ -50,6 +50,13 @@
     "failed": "Failed",
     "rejected": "Rejected"
   },
+  "client": {
+    "selectPrompt": "Select your client account",
+    "cannotLoad": "Cannot load client list",
+    "enterId": "Enter Client ID",
+    "orEnterManual": "Or enter Client ID manually:",
+    "switch": "Switch Client"
+  },
   "settings": {
     "title": "Settings",
     "heading": "Settings",

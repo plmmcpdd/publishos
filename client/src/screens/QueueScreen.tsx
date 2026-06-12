@@ -1,8 +1,6 @@
 import { useEffect, useState } from 'react';
 import { confirmContent, ContentItem, fetchDeliveredContents } from '../api';
 
-const CURRENT_CLIENT_ID = 'demo-client-1';
-
 function formatDate(value?: string) {
   if (!value) return '';
   return new Date(value).toLocaleDateString();
@@ -27,7 +25,7 @@ export default function QueueScreen() {
     setLoading(true);
     setError('');
     try {
-      setContents(await fetchDeliveredContents(CURRENT_CLIENT_ID));
+      setContents(await fetchDeliveredContents());
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load content');
     } finally {

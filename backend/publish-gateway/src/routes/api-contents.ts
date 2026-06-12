@@ -36,8 +36,16 @@ function statusFilter(status?: string) {
 
 router.get('/', async (req, res) => {
   const status = typeof req.query.status === 'string' ? req.query.status : undefined;
+  const clientId = typeof req.query.client_id === 'string' ? req.query.client_id : undefined;
+
+  if (!clientId) {
+    res.status(400).json({ error: 'client_id is required' });
+    return;
+  }
+
   const contents = await prisma.content.findMany({
     where: {
+      clientId,
       ...(status ? { status: statusFilter(status) } : {}),
     },
     orderBy: { updatedAt: 'desc' },

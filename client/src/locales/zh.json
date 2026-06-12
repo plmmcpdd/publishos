@@ -50,6 +50,13 @@
     "failed": "失败",
     "rejected": "已拒绝"
   },
+  "client": {
+    "selectPrompt": "选择你的客户账号",
+    "cannotLoad": "无法加载客户列表",
+    "enterId": "输入客户 ID",
+    "orEnterManual": "或手动输入客户 ID：",
+    "switch": "切换客户"
+  },
   "settings": {
     "title": "设置",
     "heading": "设置",

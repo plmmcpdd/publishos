@@ -24,6 +24,16 @@ function generatePresignedUrl(s3Key: string): string {
   return `https://${bucket}.s3.amazonaws.com/${s3Key}?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Expires=${PRESIGN_EXPIRY_SECONDS}&X-Amz-SignedHeaders=host`;
 }
 
+// GET /client/list - list all active clients (for client app selection)
+router.get('/list', async (_req, res) => {
+  const clients = await prisma.client.findMany({
+    where: { active: true },
+    select: { id: true, name: true, industry: true },
+    orderBy: { name: 'asc' },
+  });
+  res.json({ data: clients });
+});
+
 // POST /client/register - device registration (called by Electron app on first run)
 router.post('/register', async (req, res) => {
   const { device_id, client_id, capabilities } = req.body;

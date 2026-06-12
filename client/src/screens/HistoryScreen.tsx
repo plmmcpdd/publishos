@@ -1,8 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ContentItem, fetchClientHistory } from '../api';
 
-const CURRENT_CLIENT_ID = 'demo-client-1';
-
 function formatDate(value?: string) {
   if (!value) return '';
   return new Date(value).toLocaleString();
@@ -33,7 +31,7 @@ export default function HistoryScreen() {
       setLoading(true);
       setError('');
       try {
-        setHistory(await fetchClientHistory(CURRENT_CLIENT_ID));
+        setHistory(await fetchClientHistory());
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load history');
       } finally {
