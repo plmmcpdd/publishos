@@ -1,5 +1,7 @@
 // ---- Server URL management ----
-// Priority: localStorage > build-time env > auto-detect > fallback
+// ⚠️ CHANGE THIS when deploying to a new server:
+const DEFAULT_SERVER = 'http://104.238.181.32:3000/v1';
+// Priority: localStorage (Settings page) > build-time VITE_API_URL > DEFAULT_SERVER > auto-detect > fallback
 const STORAGE_KEY = 'publishos_backend_url';
 const BUILD_URL = import.meta.env.VITE_API_URL || '';
 const FALLBACK_URL = 'http://localhost:3000/v1';
@@ -10,12 +12,8 @@ function getApiBase(): string {
   if (saved) return saved;
   // 2. Build-time URL (VITE_API_URL)
   if (BUILD_URL) return BUILD_URL;
-  // 3. Auto-detect: assume server is on same host, port 3000
-  if (typeof window !== 'undefined' && window.location.hostname) {
-    return `http://${window.location.hostname}:3000/v1`;
-  }
-  // 4. Fallback
-  return FALLBACK_URL;
+  // 3. Hardcoded default server
+  return DEFAULT_SERVER;
 }
 
 export const api = {
