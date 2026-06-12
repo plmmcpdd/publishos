@@ -1,5 +1,15 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, Component, ReactNode } from 'react';
 import { api, confirmContent, ContentItem, fetchDeliveredContents } from '../api';
+
+// Error boundary to catch render crashes
+class ErrorBoundary extends Component<{ children: ReactNode }, { error: string | null }> {
+  state = { error: null as string | null };
+  static getDerivedStateFromError(err: Error) { return { error: err.message || String(err) }; }
+  render() {
+    if (this.state.error) return <div className="empty-state"><div className="empty-state-title" style={{ color: '#dc2626' }}>Render error: {this.state.error}</div></div>;
+    return this.props.children;
+  }
+}
 
 function formatDate(value?: string) {
   if (!value) return '';
@@ -53,6 +63,7 @@ export default function QueueScreen() {
   };
 
   return (
+    <ErrorBoundary>
     <div className="content-area">
       <div className="topbar">
         <div className="topbar-title">Content Queue</div>
@@ -108,7 +119,14 @@ export default function QueueScreen() {
               </div>
               {content.videoUrl ? (
                 <div style={{ margin: '14px 0' }}>
-                  <video controls src={assetUrl(content.videoUrl)} style={{ width: '100%', maxHeight: 260, borderRadius: 12 }} />
+                  <ErrorBoundary>
+                    <video
+                      controls
+                      src={assetUrl(content.videoUrl)}
+                      style={{ width: '100%', maxHeight: 260, borderRadius: 12 }}
+                      onError={(e) => { (e.target as HTMLVideoElement).style.display = 'none'; }}
+                    />
+                  </ErrorBoundary>
                 </div>
               ) : content.thumbnailUrl ? (
                 <img src={assetUrl(content.thumbnailUrl)} alt={content.title} style={{ width: '100%', maxHeight: 220, objectFit: 'cover', borderRadius: 12, margin: '14px 0' }} />
@@ -126,5 +144,6 @@ export default function QueueScreen() {
         )}
       </div>
     </div>
+    </ErrorBoundary>
   );
 }
