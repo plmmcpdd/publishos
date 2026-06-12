@@ -37,12 +37,27 @@ const createContentSchema = z.object({
   message: 'clientId is required',
 });
 
-function serializeContent(content: any) {
+// Strip sensitive fields from client objects in responses
+function sanitizeClient(client: any) {
+  if (!client) return client;
+  const { password, ...safe } = client;
+  return safe;
+}
+
+function sanitizeContent(content: any) {
+  if (!content) return content;
   return {
+    ...content,
+    client: sanitizeClient(content.client),
+  };
+}
+
+function serializeContent(content: any) {
+  return sanitizeContent({
     ...content,
     platform: firstPlatform(content.platforms),
     thumbnail_url: content.thumbnailUrl,
-  };
+  });
 }
 
 function firstPlatform(value?: string) {
