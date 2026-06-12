@@ -1,18 +1,19 @@
 import { Link, Outlet, useLocation } from 'react-router-dom';
 
 const navItems = [
-  { path: '/', label: '概览', icon: '01' },
-  { path: '/review', label: '审核流', icon: '02' },
-  { path: '/contents', label: '内容管理', icon: '03' },
-  { path: '/customers', label: '客户管理', icon: '04' },
-  { path: '/monitor', label: '系统监控', icon: '05' },
-  { path: '/audit', label: '审计日志', icon: '06' },
-  { path: '/settings', label: '设置', icon: '07' },
+  { path: '/', label: 'Overview', icon: '01' },
+  { path: '/review', label: 'Review Queue', icon: '02' },
+  { path: '/contents', label: 'Content', icon: '03' },
+  { path: '/customers', label: 'Clients', icon: '04' },
+  { path: '/social-accounts', label: 'Social Accounts', icon: '05' },
+  { path: '/monitor', label: 'Monitor', icon: '06' },
+  { path: '/audit', label: 'Audit Logs', icon: '07' },
+  { path: '/settings', label: 'Settings', icon: '08' },
 ];
 
 export default function Layout() {
   const location = useLocation();
-  const activeLabel = navItems.find((item) => item.path === location.pathname)?.label || '概览';
+  const activeLabel = navItems.find((item) => item.path === location.pathname)?.label || 'Overview';
 
   const logout = () => {
     localStorage.removeItem('dashboard_auth');
@@ -23,17 +24,17 @@ export default function Layout() {
 
   return (
     <div className="flex h-screen">
-      <aside className="w-64 bg-brand-deepblue text-white flex flex-col">
+      <aside className="flex w-64 flex-col bg-brand-deepblue text-white">
         <div className="p-6">
           <h1 className="text-xl font-bold">PublishOS</h1>
-          <p className="text-sm opacity-70">运营后台</p>
+          <p className="text-sm opacity-70">Operations Dashboard</p>
         </div>
         <nav className="flex-1 px-4">
           {navItems.map((item) => (
             <Link
               key={item.path}
               to={item.path}
-              className={`flex items-center gap-3 px-4 py-3 rounded-lg mb-1 transition ${
+              className={`mb-1 flex items-center gap-3 rounded-lg px-4 py-3 transition ${
                 location.pathname === item.path ? 'bg-white/20' : 'hover:bg-white/10'
               }`}
             >
@@ -44,18 +45,18 @@ export default function Layout() {
         </nav>
         <div className="p-4">
           <button type="button" onClick={logout} className="px-4 py-2 text-sm opacity-70 hover:opacity-100">
-            退出登录
+            Log out
           </button>
           <div className="mt-3 text-xs opacity-50">PublishOS Dashboard v0.1.0</div>
         </div>
       </aside>
 
       <main className="flex-1 overflow-auto">
-        <header className="bg-white border-b px-8 py-4 flex justify-between items-center">
+        <header className="flex items-center justify-between border-b bg-white px-8 py-4">
           <h2 className="text-lg font-medium">{activeLabel}</h2>
           <div className="flex items-center gap-4">
-            <span className="w-2 h-2 bg-green-500 rounded-full" />
-            <span className="text-sm text-gray-600">系统正常</span>
+            <span className="h-2 w-2 rounded-full bg-green-500" />
+            <span className="text-sm text-gray-600">System healthy</span>
           </div>
         </header>
         <div className="p-8">

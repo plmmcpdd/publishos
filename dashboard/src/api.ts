@@ -38,6 +38,15 @@ export interface Client {
   active: boolean;
 }
 
+export interface SocialBinding {
+  id: string;
+  platform: string;
+  username: string;
+  status: string;
+  expiresAt?: string | null;
+  createdAt: string;
+}
+
 export interface AdminSession {
   token: string;
   admin: {
@@ -150,6 +159,22 @@ export async function createContent(input: {
 export async function fetchClients(): Promise<Client[]> {
   const data = await request<{ success?: boolean; data: Client[] }>('/client');
   return data.data;
+}
+
+export async function fetchTikTokBindings(clientId: string): Promise<SocialBinding[]> {
+  const data = await request<{ success: boolean; data: SocialBinding[] }>(`/tiktok/bindings/${clientId}`);
+  return data.data;
+}
+
+export async function fetchTikTokAuthUrl(clientId: string): Promise<string> {
+  const data = await request<{ success: boolean; data: { authUrl: string } }>(
+    `/tiktok/auth?clientId=${encodeURIComponent(clientId)}`,
+  );
+  return data.data.authUrl;
+}
+
+export async function disconnectTikTokBinding(id: string): Promise<void> {
+  await request(`/tiktok/bindings/${id}`, { method: 'DELETE' });
 }
 
 export async function createClient(input: { name: string; email: string; password: string; industry?: string }): Promise<Client> {

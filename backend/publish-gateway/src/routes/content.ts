@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma';
+import { publishToTikTok } from '../services/publisher';
 
 const router = Router();
 
@@ -207,6 +208,19 @@ router.get('/delivered', async (req, res) => {
   }
 });
 
+router.get('/:id/publish-status', async (req, res) => {
+  try {
+    const jobs = await prisma.publishJob.findMany({
+      where: { contentId: req.params.id },
+      include: { accountBinding: true },
+      orderBy: { createdAt: 'desc' },
+    });
+    res.json({ success: true, data: jobs });
+  } catch (error) {
+    res.status(500).json({ success: false, error: String(error) });
+  }
+});
+
 router.get('/:id', async (req, res) => {
   const content = await prisma.content.findUnique({
     where: { id: req.params.id },
@@ -257,11 +271,38 @@ router.post('/:id/confirm', async (req, res) => {
       return;
     }
 
+    const binding = await prisma.accountBinding.findFirst({
+      where: {
+        clientId,
+        platform: 'tiktok',
+        active: true,
+        status: 'active',
+        accessToken: { not: null },
+      },
+      orderBy: { updatedAt: 'desc' },
+    });
+
     const content = await prisma.content.update({
       where: { id: req.params.id },
-      data: { status: 'published' },
+      data: { status: 'published', publishedAt: new Date() },
       include: { client: true },
     });
+
+    let jobId: string | null = null;
+    if (binding) {
+      const job = await prisma.publishJob.create({
+        data: {
+          contentId: content.id,
+          accountBindingId: binding.id,
+          platform: 'tiktok',
+          status: 'pending',
+        },
+      });
+      jobId = job.id;
+      publishToTikTok(job.id).catch((error) => {
+        console.error(`TikTok publish job ${job.id} failed`, error);
+      });
+    }
 
     await writeAudit({
       action: 'published',
@@ -270,10 +311,20 @@ router.post('/:id/confirm', async (req, res) => {
       targetId: content.id,
       actorId: clientId,
       deviceId,
-      details: `Published by client ${clientId}`,
+      details: binding
+        ? JSON.stringify({ message: 'Published to TikTok', jobId, bindingId: binding.id })
+        : JSON.stringify({ message: 'Status updated, no TikTok binding' }),
     });
 
-    res.json({ success: true, data: serializeContent(content) });
+    res.json({
+      success: true,
+      data: {
+        ...serializeContent(content),
+        publishing: Boolean(binding),
+        publishJobId: jobId,
+        message: binding ? 'Publishing to TikTok' : 'No TikTok account connected',
+      },
+    });
   } catch (error) {
     res.status(500).json({ success: false, error: String(error) });
   }

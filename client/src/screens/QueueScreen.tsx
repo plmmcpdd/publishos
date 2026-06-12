@@ -42,6 +42,7 @@ export default function QueueScreen() {
   const [contents, setContents] = useState<ContentItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [publishNotice, setPublishNotice] = useState('');
 
   const loadContents = async () => {
     setLoading(true);
@@ -61,10 +62,21 @@ export default function QueueScreen() {
 
   const handlePublish = async (contentId: string) => {
     try {
-      await confirmContent(contentId);
+      const result = await confirmContent(contentId);
+      setPublishNotice(
+        result.publishing
+          ? 'Publishing to TikTok. This may take a few minutes.'
+          : result.message || 'Confirmed. No TikTok account connected.',
+      );
+      alert(
+        result.publishing
+          ? 'Publishing to TikTok. This may take a few minutes.'
+          : 'Confirmed. No TikTok account connected.',
+      );
       setContents((prev) => prev.filter((content) => content.id !== contentId));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to publish content');
+      alert('Failed to publish');
     }
   };
 
@@ -85,6 +97,7 @@ export default function QueueScreen() {
       </div>
 
       <div className="section-label">Delivered Content</div>
+      {publishNotice && <div className="login-error" style={{ color: '#166534', background: '#f0fdf4', borderColor: '#bbf7d0' }}>{publishNotice}</div>}
 
       <div className="queue-list">
         {loading ? (

@@ -46,6 +46,13 @@ export interface ClientSession {
   };
 }
 
+export interface ConfirmContentResult {
+  content: ContentItem;
+  publishing: boolean;
+  publishJobId?: string | null;
+  message?: string;
+}
+
 interface ApiContent {
   id: string;
   title: string;
@@ -165,12 +172,20 @@ export async function fetchDeliveredContents(): Promise<ContentItem[]> {
   return data.data.map(mapContent);
 }
 
-export async function confirmContent(id: string): Promise<ContentItem> {
-  const data = await request<{ success: boolean; data: ApiContent }>(`/content/${id}/confirm`, {
+export async function confirmContent(id: string): Promise<ConfirmContentResult> {
+  const data = await request<{
+    success: boolean;
+    data: ApiContent & { publishing?: boolean; publishJobId?: string | null; message?: string };
+  }>(`/content/${id}/confirm`, {
     method: 'POST',
     body: JSON.stringify({ clientId: requireClientId(), deviceId: requireDeviceId() }),
   });
-  return mapContent(data.data);
+  return {
+    content: mapContent(data.data),
+    publishing: Boolean(data.data.publishing),
+    publishJobId: data.data.publishJobId,
+    message: data.data.message,
+  };
 }
 
 export async function fetchClientHistory(): Promise<ContentItem[]> {

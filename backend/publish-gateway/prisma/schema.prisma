@@ -33,6 +33,13 @@ model AccountBinding {
   client            Client       @relation(fields: [clientId], references: [id])
   platform          String       // tiktok, instagram, facebook, x, youtube
   accountUsername   String
+  platformUserId    String?
+  username          String?
+  accessToken       String?
+  refreshToken      String?
+  expiresAt         DateTime?
+  scope             String?
+  status            String       @default("active")
   businessLocation  String?      // JSON string: { country, state, city }
   active            Boolean      @default(true)
   createdAt         DateTime     @default(now())
@@ -56,6 +63,7 @@ model Content {
   aiTools           String          @default("")
   platforms         String          // JSON string: target platforms
   scheduleAt        DateTime?
+  publishedAt       DateTime?
   status            ContentStatus   @default(pending_review)
   metadata          String?         // JSON string: { industry, campaign, content_type }
   createdAt         DateTime        @default(now())
@@ -91,6 +99,7 @@ enum JobStatus {
   pending
   dispatched
   client_confirmed
+  uploading
   publishing
   published
   failed
@@ -111,11 +120,14 @@ model PublishJob {
   jobToken            String?        // one-time token for status callback
   platformPostId      String?
   platformPostUrl     String?
+  publishId           String?
   publishedAt         DateTime?
   failedAt            DateTime?
   errorCode           String?
   errorDetail         String?
+  errorMessage        String?
   retryable           Boolean         @default(false)
+  retryCount          Int             @default(0)
   deviceFingerprint   String?
   screenshotUrl       String?
   createdAt           DateTime       @default(now())

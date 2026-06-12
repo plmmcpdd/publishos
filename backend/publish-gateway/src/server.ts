@@ -13,6 +13,7 @@ import auditRoutes from './routes/audit';
 import apiContentRoutes from './routes/api-contents';
 import statsRoutes from './routes/stats';
 import auditLogRoutes from './routes/audit-logs';
+import tiktokRoutes from './routes/tiktok';
 import { languageMiddleware } from './middleware/language';
 
 dotenv.config();
@@ -33,6 +34,7 @@ app.get('/health', (_req, res) => {
 
 // API routes
 app.use('/v1/auth', authRoutes);
+app.use('/v1', tiktokRoutes);
 app.use('/v1', uploadRoutes);
 app.use('/v1/content', contentRoutes);
 app.use('/v1/publish-jobs', publishJobRoutes);
