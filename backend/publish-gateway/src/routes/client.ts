@@ -81,7 +81,7 @@ router.post('/register', async (req, res) => {
     where: { deviceId: device_id },
     update: {
       clientId: client_id,
-      capabilities: capabilities || [],
+      capabilities: JSON.stringify(capabilities || []),
       token,
       online: true,
       lastSeen: new Date(),
@@ -89,7 +89,7 @@ router.post('/register', async (req, res) => {
     create: {
       deviceId: device_id,
       clientId: client_id,
-      capabilities: capabilities || [],
+      capabilities: JSON.stringify(capabilities || []),
       token,
       online: true,
     }
@@ -178,7 +178,7 @@ router.post('/heartbeat', authenticateDevice, async (req: AuthRequest, res) => {
     data: {
       lastSeen: new Date(),
       online: status === 'online',
-      capabilities: capabilities || [],
+      capabilities: JSON.stringify(capabilities || []),
     }
   });
 
