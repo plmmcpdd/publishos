@@ -71,6 +71,13 @@ model Content {
   assets            ContentAsset[]
   publishJobs       PublishJob[]
   complianceResults String?         // JSON string: { copyright, ai_disclosure, platform_policy }
+  licenseCheckPassed Boolean        @default(false)
+  licenseCheckedAt   DateTime?
+  bannedWordsPassed  Boolean        @default(false)
+  bannedWordsCheckedAt DateTime?
+  aiDisclosureConfirmed Boolean     @default(false)
+  aiDisclosureConfirmedAt DateTime?
+  publishLogs       PublishLog[]
 }
 
 model ContentAsset {
@@ -154,6 +161,38 @@ model Device {
   capabilities String  @default("") // JSON string: tiktok_web, instagram_web, etc.
   token       String   @unique // device_token for queue polling
   createdAt   DateTime @default(now())
+}
+
+model PublishLog {
+  id                      String   @id @default(cuid())
+  contentId               String
+  content                 Content  @relation(fields: [contentId], references: [id])
+  contentTitle            String
+  userId                  String
+  userEmail               String
+  platform                String
+  licenseCheckPassed      Boolean
+  bannedWordsPassed       Boolean
+  aiDisclosureConfirmed   Boolean
+  licenseCheckedAt        DateTime?
+  bannedWordsCheckedAt    DateTime?
+  aiDisclosureConfirmedAt DateTime?
+  action                  String
+  status                  String
+  errorCode               String?
+  errorMessage            String?
+  tiktokPostUrl           String?
+  tiktokPostId            String?
+  clientIp                String?
+  userAgent               String?
+  deviceId                String?
+  sessionId               String?
+  timestamp               DateTime @default(now())
+
+  @@index([contentId])
+  @@index([userId])
+  @@index([timestamp])
+  @@index([status])
 }
 
 model AuditLog {
