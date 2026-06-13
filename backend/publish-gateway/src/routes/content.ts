@@ -282,27 +282,32 @@ router.post('/:id/confirm', async (req, res) => {
       orderBy: { updatedAt: 'desc' },
     });
 
+    if (!binding) {
+      res.status(400).json({
+        success: false,
+        error: 'No TikTok account connected. Please bind a TikTok account in Dashboard first.',
+      });
+      return;
+    }
+
     const content = await prisma.content.update({
       where: { id: req.params.id },
       data: { status: 'published', publishedAt: new Date() },
       include: { client: true },
     });
 
-    let jobId: string | null = null;
-    if (binding) {
-      const job = await prisma.publishJob.create({
-        data: {
-          contentId: content.id,
-          accountBindingId: binding.id,
-          platform: 'tiktok',
-          status: 'pending',
-        },
-      });
-      jobId = job.id;
-      publishToTikTok(job.id).catch((error) => {
-        console.error(`TikTok publish job ${job.id} failed`, error);
-      });
-    }
+    const job = await prisma.publishJob.create({
+      data: {
+        contentId: content.id,
+        accountBindingId: binding.id,
+        platform: 'tiktok',
+        status: 'pending',
+      },
+    });
+
+    publishToTikTok(job.id).catch((error) => {
+      console.error(`TikTok publish job ${job.id} failed`, error);
+    });
 
     await writeAudit({
       action: 'published',
@@ -311,18 +316,16 @@ router.post('/:id/confirm', async (req, res) => {
       targetId: content.id,
       actorId: clientId,
       deviceId,
-      details: binding
-        ? JSON.stringify({ message: 'Published to TikTok', jobId, bindingId: binding.id })
-        : JSON.stringify({ message: 'Status updated, no TikTok binding' }),
+      details: JSON.stringify({ message: 'Published to TikTok', jobId: job.id, bindingId: binding.id }),
     });
 
     res.json({
       success: true,
       data: {
         ...serializeContent(content),
-        publishing: Boolean(binding),
-        publishJobId: jobId,
-        message: binding ? 'Publishing to TikTok' : 'No TikTok account connected',
+        publishing: true,
+        publishJobId: job.id,
+        message: 'Publishing to TikTok',
       },
     });
   } catch (error) {
