@@ -7,30 +7,24 @@ on:
 
 jobs:
   build:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [windows-latest, macos-latest]
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - run: cd client && npm install
+      - name: Install dependencies
+        run: cd client && npm install
+        shell: bash
       - name: Build Windows
-        if: matrix.os == 'windows-latest'
         run: cd client && npm run build:win
+        shell: bash
         env:
-          VITE_API_URL: http://104.238.181.32:3000/v1
-      - name: Build Mac
-        if: matrix.os == 'macos-latest'
-        run: cd client && npm run build:mac
-        env:
-          VITE_API_URL: http://104.238.181.32:3000/v1
+          VITE_API_URL: "http://104.238.181.32:3000/v1"
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: publishos-${{ matrix.os }}
+          name: publishos-windows
           path: client/release/
 
   release:
@@ -52,5 +46,4 @@ jobs:
           prerelease: false
           generate_release_notes: true
           files: |
-            artifacts/publishos-windows-latest/**/*.exe
-            artifacts/publishos-macos-latest/**/*.dmg
+            artifacts/publishos-windows/**/*.exe
