@@ -223,7 +223,7 @@ export async function getTikTokAuthUrl(): Promise<string> {
   return data.data.authUrl;
 }
 
-export async function exchangeTikTokCode(code: string, state: string): Promise<{ username: string }> {
+export async function exchangeTikTokCode(code: string, _state: string): Promise<{ username: string }> {
   const clientId = requireClientId();
   const data = await request<{ success: boolean; data: { username: string } }>(
     '/tiktok/exchange',
