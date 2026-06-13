@@ -6,6 +6,7 @@ export interface ElectronAPI {
   minimizeWindow: () => void;
   onQueueUpdate: (callback: (count: number) => void) => void;
   removeQueueListener: () => void;
+  openTikTokAuth: (authUrl: string) => Promise<void>;
 }
 
 const api: ElectronAPI = {
@@ -14,6 +15,7 @@ const api: ElectronAPI = {
   minimizeWindow: () => ipcRenderer.send('window:minimize'),
   onQueueUpdate: (callback) => ipcRenderer.on('queue:update', (_event, count) => callback(count)),
   removeQueueListener: () => ipcRenderer.removeAllListeners('queue:update'),
+  openTikTokAuth: (authUrl: string) => ipcRenderer.invoke('tiktok:open-auth', authUrl),
 };
 
 contextBridge.exposeInMainWorld('electronAPI', api);

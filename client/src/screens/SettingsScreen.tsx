@@ -1,30 +1,7 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { api, checkServerConnection } from '../api';
-
-interface Account {
-  id: string;
-  platform: 'tiktok' | 'instagram' | 'youtube' | 'facebook';
-  username: string;
-  connected: boolean;
-}
-
-const platformNames: Record<string, string> = {
-  tiktok: 'TikTok',
-  instagram: 'Instagram',
-  youtube: 'YouTube',
-  facebook: 'Facebook',
-};
-
-function AccountAvatar({ platform }: { platform: string }) {
-  const initials: Record<string, string> = {
-    tiktok: 'T',
-    instagram: 'I',
-    youtube: 'Y',
-    facebook: 'F',
-  };
-  return <div className="account-avatar">{initials[platform] || platform.charAt(0).toUpperCase()}</div>;
-}
+import { api, checkServerConnection, fetchTikTokBindings, getTikTokAuthUrl, disconnectTikTokBinding } from '../api';
+import type { TikTokBinding } from '../api';
 
 function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
   return (
@@ -38,16 +15,53 @@ export default function SettingsScreen() {
   const { t, i18n } = useTranslation();
   const [backendUrl, setBackendUrl] = useState(api.base);
   const [connStatus, setConnStatus] = useState<'connected' | 'failed' | null>(null);
-  const [accounts, setAccounts] = useState<Account[]>([
-    { id: '1', platform: 'tiktok', username: '@acme_hvac', connected: true },
-    { id: '2', platform: 'instagram', username: '@acme_hvac', connected: false },
-  ]);
+  const [tiktokBindings, setTiktokBindings] = useState<TikTokBinding[]>([]);
+  const [bindingLoading, setBindingLoading] = useState(false);
 
   const [notify, setNotify] = useState(true);
   const [launchAtLogin, setLaunchAtLogin] = useState(false);
 
-  const toggleAccount = (id: string) => {
-    setAccounts((prev) => prev.map((a) => (a.id === id ? { ...a, connected: !a.connected } : a)));
+  useEffect(() => {
+    fetchTikTokBindings().then(setTiktokBindings).catch(() => {});
+  }, []);
+
+  const handleConnectTikTok = async () => {
+    try {
+      setBindingLoading(true);
+      const authUrl = await getTikTokAuthUrl();
+      // Open in system browser - TikTok will redirect to server callback
+      if (window.electronAPI?.openTikTokAuth) {
+        await window.electronAPI.openTikTokAuth(authUrl);
+      } else {
+        window.open(authUrl, '_blank');
+      }
+      // Poll for new binding (server handles the callback)
+      const pollInterval = setInterval(async () => {
+        try {
+          const bindings = await fetchTikTokBindings();
+          if (bindings.length > tiktokBindings.length) {
+            clearInterval(pollInterval);
+            setTiktokBindings(bindings);
+            setBindingLoading(false);
+            alert('TikTok connected!');
+          }
+        } catch { /* keep polling */ }
+      }, 2000);
+      // Stop polling after 5 minutes
+      setTimeout(() => { clearInterval(pollInterval); setBindingLoading(false); }, 300000);
+    } catch (err) {
+      alert(`Error: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      setBindingLoading(false);
+    }
+  };
+
+  const handleDisconnect = async (id: string) => {
+    try {
+      await disconnectTikTokBinding(id);
+      setTiktokBindings((prev) => prev.filter((b) => b.id !== id));
+    } catch (err) {
+      alert(`Error: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    }
   };
 
   const changeLang = (lang: string) => {
@@ -71,25 +85,41 @@ export default function SettingsScreen() {
       </div>
 
       <div className="section-label">{t('settings.account')}</div>
-      {accounts.map((acc) => (
-        <div key={acc.id} className="account-card">
-          <AccountAvatar platform={acc.platform} />
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700, marginBottom: 2 }}>
-              {platformNames[acc.platform] || acc.platform}
-            </div>
-            <div style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 500 }}>
-              {acc.username}
-            </div>
-          </div>
+      {tiktokBindings.length === 0 ? (
+        <div className="card" style={{ margin: '0 16px 14px', padding: 20, textAlign: 'center' }}>
+          <p style={{ color: 'var(--text-muted)', marginBottom: 12 }}>No TikTok account connected</p>
           <button
-            className={`btn ${acc.connected ? 'btn-secondary' : 'btn-primary'}`}
-            onClick={() => toggleAccount(acc.id)}
+            className="btn btn-primary"
+            onClick={() => void handleConnectTikTok()}
+            disabled={bindingLoading}
           >
-            {acc.connected ? t('settings.disconnect') : t('settings.connect')}
+            {bindingLoading ? 'Connecting...' : 'Connect TikTok'}
           </button>
         </div>
-      ))}
+      ) : (
+        tiktokBindings.map((binding) => (
+          <div key={binding.id} className="card" style={{ margin: '0 16px 14px' }}>
+            <div className="setting-row">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div className="account-avatar">T</div>
+                <div>
+                  <div style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700 }}>TikTok</div>
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 500 }}>
+                    @{binding.username || binding.accountUsername}
+                    {binding.status === 'active' ? ' · Connected' : ' · Expired'}
+                  </div>
+                </div>
+              </div>
+              <button
+                className="btn btn-secondary"
+                onClick={() => void handleDisconnect(binding.id)}
+              >
+                Disconnect
+              </button>
+            </div>
+          </div>
+        ))
+      )}
 
       <div className="section-label" style={{ marginTop: 8 }}>{t('settings.preferences')}</div>
 

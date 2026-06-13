@@ -67,6 +67,11 @@ ipcMain.handle('app:get-version', () => {
   return app.getVersion();
 });
 
+ipcMain.handle('tiktok:open-auth', async (_event, authUrl: string) => {
+  const { shell } = await import('electron');
+  shell.openExternal(authUrl);
+});
+
 ipcMain.on('window:minimize', () => {
   mainWindow?.hide();
 });

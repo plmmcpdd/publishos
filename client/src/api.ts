@@ -195,3 +195,46 @@ export async function fetchClientHistory(): Promise<ContentItem[]> {
   );
   return data.data.map(mapContent).filter((item) => item.status === 'published' || item.status === 'rejected');
 }
+
+// ---- TikTok binding ----
+
+export interface TikTokBinding {
+  id: string;
+  platform: string;
+  accountUsername: string;
+  username: string;
+  status: string;
+  active: boolean;
+}
+
+export async function fetchTikTokBindings(): Promise<TikTokBinding[]> {
+  const clientId = requireClientId();
+  const data = await request<{ success: boolean; data: TikTokBinding[] }>(
+    `/tiktok/bindings/${encodeURIComponent(clientId)}`,
+  );
+  return data.data;
+}
+
+export async function getTikTokAuthUrl(): Promise<string> {
+  const clientId = requireClientId();
+  const data = await request<{ success: boolean; data: { authUrl: string } }>(
+    `/tiktok/auth-url?clientId=${encodeURIComponent(clientId)}`,
+  );
+  return data.data.authUrl;
+}
+
+export async function exchangeTikTokCode(code: string, state: string): Promise<{ username: string }> {
+  const clientId = requireClientId();
+  const data = await request<{ success: boolean; data: { username: string } }>(
+    '/tiktok/exchange',
+    {
+      method: 'POST',
+      body: JSON.stringify({ code, clientId }),
+    },
+  );
+  return data.data;
+}
+
+export async function disconnectTikTokBinding(id: string): Promise<void> {
+  await request(`/tiktok/bindings/${id}`, { method: 'DELETE' });
+}
