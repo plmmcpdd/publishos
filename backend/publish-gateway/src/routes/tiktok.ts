@@ -98,9 +98,41 @@ function missingTikTokTokenFields(fields: ReturnType<typeof readTikTokTokenField
   ].filter(([, value]) => !value).map(([field]) => field);
 }
 
+function shortOpenId(openId?: string | null) {
+  return openId ? openId.slice(-8) : '';
+}
+
+function fallbackTikTokName(openId?: string | null) {
+  const suffix = shortOpenId(openId);
+  return suffix ? `TikTok User ${suffix}` : 'TikTok Account';
+}
+
+function normalizeTikTokName(value?: string | null) {
+  if (!value || value.trim().toLowerCase() === 'unknown') return null;
+  return value.trim();
+}
+
+function getTikTokDisplayName(userData: any, openId?: string | null) {
+  const user = userData?.data?.user || userData?.user || {};
+  return normalizeTikTokName(user.display_name)
+    || normalizeTikTokName(user.username)
+    || normalizeTikTokName(user.open_id)
+    || fallbackTikTokName(openId);
+}
+
+function presentTikTokBindingName(binding: {
+  username?: string | null;
+  accountUsername?: string | null;
+  platformUserId?: string | null;
+}) {
+  return normalizeTikTokName(binding.username)
+    || normalizeTikTokName(binding.accountUsername)
+    || fallbackTikTokName(binding.platformUserId);
+}
+
 // ---- Electron OAuth endpoints ----
 
-// GET /tiktok/auth-url?clientId=xxx ? returns TikTok auth URL for Electron
+// GET /tiktok/auth-url?clientId=xxx → returns TikTok auth URL for Electron
 function buildTikTokAuthUrl(clientId: string, redirectUri: string) {
   const scopes = ['user.info.basic', 'video.upload'];
   const authUrl = new URL('https://www.tiktok.com/v2/auth/authorize/');
@@ -133,7 +165,7 @@ async function handleTikTokAuthUrl(req: Request, res: Response, redirectUri: str
 router.get('/tiktok/auth', (req, res) => void handleTikTokAuthUrl(req, res, TIKTOK_REDIRECT_URI));
 router.get('/tiktok/auth-url', (req, res) => void handleTikTokAuthUrl(req, res, ELECTRON_REDIRECT_URI));
 
-// POST /tiktok/exchange { code, clientId } ? exchanges code for tokens, saves binding
+// POST /tiktok/exchange { code, clientId } → exchanges code for tokens, saves binding
 router.post('/tiktok/exchange', async (req, res) => {
   try {
     const { code, clientId } = req.body;
@@ -165,7 +197,7 @@ router.post('/tiktok/exchange', async (req, res) => {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
     const userData: any = await userRes.json();
-    const username = userData.data?.user?.username || userData.data?.user?.display_name || 'unknown';
+    const username = getTikTokDisplayName(userData, openId);
 
     // Save binding
     await prisma.accountBinding.upsert({
@@ -243,7 +275,7 @@ router.get('/tiktok/callback', async (req, res) => {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
     const userData: any = await userRes.json();
-    const username = userData.data?.user?.username || userData.data?.user?.display_name || 'unknown';
+    const username = getTikTokDisplayName(userData, openId);
 
     await prisma.accountBinding.upsert({
       where: { clientId_platform_accountUsername: { clientId, platform: 'tiktok', accountUsername: username } },
@@ -283,6 +315,7 @@ router.get('/tiktok/bindings/:clientId', async (req, res) => {
         id: true,
         platform: true,
         accountUsername: true,
+        platformUserId: true,
         username: true,
         status: true,
         active: true,
@@ -295,7 +328,9 @@ router.get('/tiktok/bindings/:clientId', async (req, res) => {
       success: true,
       data: bindings.map((binding) => ({
         ...binding,
-        username: binding.username || binding.accountUsername,
+        username: presentTikTokBindingName(binding),
+        displayName: presentTikTokBindingName(binding),
+        openId: binding.platformUserId,
         status: binding.active ? binding.status : 'revoked',
       })),
     });

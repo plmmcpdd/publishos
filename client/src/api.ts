@@ -203,6 +203,9 @@ export interface TikTokBinding {
   platform: string;
   accountUsername: string;
   username: string;
+  displayName?: string;
+  platformUserId?: string;
+  openId?: string;
   status: string;
   active: boolean;
 }

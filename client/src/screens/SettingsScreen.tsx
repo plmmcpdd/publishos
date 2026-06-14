@@ -11,6 +11,21 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean
   );
 }
 
+function cleanTikTokName(value?: string | null) {
+  if (!value || value.trim().toLowerCase() === 'unknown') return '';
+  return value.trim();
+}
+
+function tikTokBindingLabel(binding: TikTokBinding) {
+  const name = cleanTikTokName(binding.displayName)
+    || cleanTikTokName(binding.username)
+    || cleanTikTokName(binding.accountUsername);
+  if (name) return name.startsWith('@') ? name : `@${name}`;
+
+  const openId = cleanTikTokName(binding.platformUserId || binding.openId);
+  return openId ? `TikTok User ${openId.slice(-8)}` : 'TikTok Account';
+}
+
 export default function SettingsScreen() {
   const { t, i18n } = useTranslation();
   const [backendUrl, setBackendUrl] = useState(api.base);
@@ -105,7 +120,7 @@ export default function SettingsScreen() {
                 <div>
                   <div style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700 }}>TikTok</div>
                   <div style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 500 }}>
-                    @{binding.username || binding.accountUsername}
+                    {tikTokBindingLabel(binding)}
                     {binding.status === 'active' ? ' · Connected' : ' · Expired'}
                   </div>
                 </div>
