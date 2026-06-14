@@ -54,10 +54,15 @@ function sanitizeContent(content: any) {
 }
 
 function serializeContent(content: any) {
+  if (!content) return content;
+  // Include latest publish job error if available
+  const latestJob = content.publishJobs?.[0];
   return sanitizeContent({
     ...content,
     platform: firstPlatform(content.platforms),
     thumbnail_url: content.thumbnailUrl,
+    publishError: latestJob?.errorMessage || null,
+    publishJobStatus: latestJob?.status || null,
   });
 }
 
@@ -176,7 +181,7 @@ router.get('/', async (req, res) => {
       ...(status ? { status: statusFilter(status) } : {}),
       ...(clientId ? { clientId } : {}),
     },
-    include: { assets: true, client: true, publishJobs: { include: { accountBinding: true } } },
+    include: { assets: true, client: true, publishJobs: { include: { accountBinding: true }, orderBy: { createdAt: 'desc' } } },
     orderBy: { createdAt: 'desc' },
     take: 100,
   });

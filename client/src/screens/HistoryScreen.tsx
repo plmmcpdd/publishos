@@ -112,6 +112,11 @@ export default function HistoryScreen() {
                 <div className="card-meta">
                   <div className="card-title">{item.title}</div>
                   <div className="card-schedule">{formatDate(item.updatedAt || item.createdAt)}</div>
+                  {item.status === 'failed' && item.publishError && (
+                    <div style={{ fontSize: 11, color: '#dc2626', marginTop: 4, wordBreak: 'break-word' }}>
+                      {item.publishError.length > 120 ? item.publishError.slice(0, 120) + '...' : item.publishError}
+                    </div>
+                  )}
                   <div className="tag-row">
                     <PlatformTag platform={item.platform} />
                     <StatusBadge status={item.status} />

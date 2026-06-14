@@ -77,6 +77,16 @@ export async function publishToTikTok(jobId: string): Promise<void> {
 
     console.log(`[publish] jobId=${jobId} videoUrl=${videoUrl}`);
 
+    // Step 1: Download video from our server
+    const videoRes = await fetch(videoUrl);
+    if (!videoRes.ok) {
+      throw new Error(`Failed to download video from ${videoUrl}: ${videoRes.status}`);
+    }
+    const videoBuffer = Buffer.from(await videoRes.arrayBuffer());
+    const videoSize = videoBuffer.length;
+    console.log(`[publish] Downloaded video: ${videoSize} bytes`);
+
+    // Step 2: Init upload (UPLOAD_FROM_DEVICE requires video.upload scope)
     const initRes = await fetch('https://open.tiktokapis.com/v2/post/publish/video/init/', {
       method: 'POST',
       headers: {
@@ -93,8 +103,8 @@ export async function publishToTikTok(jobId: string): Promise<void> {
           disable_stitch: false,
         },
         source_info: {
-          source: 'PULL_FROM_URL',
-          video_url: videoUrl,
+          source: 'UPLOAD_FROM_DEVICE',
+          video_size: videoSize,
         },
       }),
     });
@@ -108,7 +118,29 @@ export async function publishToTikTok(jobId: string): Promise<void> {
     }
 
     const publishId = initData.data?.publish_id;
-    if (!publishId) throw new Error('TikTok init failed: missing publish_id in response');
+    const uploadUrl = initData.data?.upload_url;
+    if (!publishId) throw new Error('TikTok init failed: missing publish_id');
+    if (!uploadUrl) throw new Error('TikTok init failed: missing upload_url');
+
+    console.log(`[publish] publishId=${publishId}, uploadUrl=${uploadUrl}`);
+
+    // Step 3: Upload video to TikTok
+    const uploadRes = await fetch(uploadUrl, {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'video/mp4',
+        'Content-Range': `bytes 0-${videoSize - 1}/${videoSize}`,
+      },
+      body: videoBuffer,
+    });
+
+    const uploadText = await uploadRes.text();
+    console.log(`[publish] TikTok upload response: ${uploadRes.status} ${uploadText.slice(0, 300)}`);
+
+    if (!uploadRes.ok && uploadRes.status !== 201) {
+      throw new Error(`TikTok upload failed (${uploadRes.status}): ${uploadText.slice(0, 200)}`);
+    }
 
     await prisma.publishJob.update({
       where: { id: jobId },
@@ -159,7 +191,7 @@ async function pollPublishStatus(jobId: string, publishId: string, accessToken: 
     const status = statusData.data?.status;
     if (status === 'PUBLISH_COMPLETE') {
       const publishedAt = new Date();
-      const job = await prisma.publishJob.update({
+      await prisma.publishJob.update({
         where: { id: jobId },
         data: {
           status: 'published',

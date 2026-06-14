@@ -35,6 +35,8 @@ export interface ContentItem {
   thumbnail_url?: string;
   videoUrl?: string;
   postUrl?: string;
+  publishError?: string | null;
+  publishJobStatus?: string | null;
 }
 
 export interface ClientSession {
@@ -67,6 +69,8 @@ interface ApiContent {
   thumbnail_url?: string | null;
   videoUrl?: string | null;
   platformPostUrl?: string | null;
+  publishError?: string | null;
+  publishJobStatus?: string | null;
 }
 
 function firstPlatform(value?: string) {
@@ -94,6 +98,8 @@ function mapContent(item: ApiContent): ContentItem {
     thumbnail_url: item.thumbnail_url || undefined,
     videoUrl: item.videoUrl || undefined,
     postUrl: item.platformPostUrl || undefined,
+    publishError: item.publishError || null,
+    publishJobStatus: item.publishJobStatus || null,
   };
 }
 
