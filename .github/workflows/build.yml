@@ -56,4 +56,4 @@ jobs:
           prerelease: false
           generate_release_notes: true
           files: |
-            artifacts/publishos-windows/**/*.exe
+            artifacts/publishos-windows/**/*Setup*.exe
