@@ -5,9 +5,12 @@ const router = Router();
 
 const TIKTOK_CLIENT_KEY = process.env.TIKTOK_CLIENT_KEY || '';
 const TIKTOK_CLIENT_SECRET = process.env.TIKTOK_CLIENT_SECRET || '';
-const TIKTOK_REDIRECT_URI = process.env.TIKTOK_REDIRECT_URI || 'http://104.238.181.32:3000/v1/tiktok/callback';
+const TIKTOK_REDIRECT_URI = process.env.TIKTOK_REDIRECT_URI || 'https://reaching-combines-bass-propose.trycloudflare.com/v1/tiktok/callback';
 // For Electron: custom protocol redirect
 const ELECTRON_REDIRECT_URI = 'publishos://tiktok-callback';
+const TIKTOK_TOKEN_ENDPOINT = 'https://open.tiktokapis.com/v2/oauth/token/';
+
+type TikTokTokenPayload = Record<string, any>;
 
 function encodeState(clientId: string): string {
   return Buffer.from(JSON.stringify({ clientId, ts: Date.now() })).toString('base64url');
@@ -17,10 +20,99 @@ function decodeState(state: string): { clientId: string; ts?: number } {
   return JSON.parse(Buffer.from(state, 'base64url').toString('utf8'));
 }
 
+function redactTikTokTokenBody(value: any): any {
+  if (Array.isArray(value)) return value.map(redactTikTokTokenBody);
+  if (!value || typeof value !== 'object') return value;
+
+  return Object.fromEntries(Object.entries(value).map(([key, entry]) => {
+    if (/token|secret/i.test(key)) return [key, entry ? '[redacted]' : entry];
+    return [key, redactTikTokTokenBody(entry)];
+  }));
+}
+
+function getTikTokTokenValue(tokenData: TikTokTokenPayload, field: string) {
+  return tokenData?.data?.[field] ?? tokenData?.[field];
+}
+
+function describeTikTokTokenError(tokenData: TikTokTokenPayload, fallback = 'Token exchange failed') {
+  const error = tokenData?.error;
+  const parts = [
+    typeof error === 'string' ? error : undefined,
+    error?.code,
+    error?.message,
+    tokenData?.error_description,
+    tokenData?.message,
+    tokenData?.log_id ? `log_id=${tokenData.log_id}` : undefined,
+    error?.log_id ? `log_id=${error.log_id}` : undefined,
+  ].filter(Boolean);
+
+  return parts.length ? parts.join(' | ') : fallback;
+}
+
+async function exchangeTikTokToken(code: string, redirectUri: string) {
+  const tokenRes = await fetch(TIKTOK_TOKEN_ENDPOINT, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_key: TIKTOK_CLIENT_KEY,
+      client_secret: TIKTOK_CLIENT_SECRET,
+      code,
+      grant_type: 'authorization_code',
+      redirect_uri: redirectUri,
+    }),
+  });
+
+  const rawBody = await tokenRes.text();
+  let tokenData: TikTokTokenPayload;
+  try {
+    tokenData = rawBody ? JSON.parse(rawBody) : {};
+  } catch {
+    tokenData = { message: rawBody || 'Non-JSON response from TikTok token endpoint' };
+  }
+
+  console.log('TikTok token exchange response', {
+    status: tokenRes.status,
+    ok: tokenRes.ok,
+    redirectUri,
+    body: redactTikTokTokenBody(tokenData),
+  });
+
+  return { tokenRes, tokenData };
+}
+
+function readTikTokTokenFields(tokenData: TikTokTokenPayload) {
+  const accessToken = getTikTokTokenValue(tokenData, 'access_token');
+  const refreshToken = getTikTokTokenValue(tokenData, 'refresh_token');
+  const openId = getTikTokTokenValue(tokenData, 'open_id');
+  const expiresIn = getTikTokTokenValue(tokenData, 'expires_in');
+  const scope = getTikTokTokenValue(tokenData, 'scope');
+
+  return { accessToken, refreshToken, openId, expiresIn, scope };
+}
+
+function missingTikTokTokenFields(fields: ReturnType<typeof readTikTokTokenFields>) {
+  return [
+    ['access_token', fields.accessToken],
+    ['open_id', fields.openId],
+    ['expires_in', fields.expiresIn],
+  ].filter(([, value]) => !value).map(([field]) => field);
+}
+
 // ---- Electron OAuth endpoints ----
 
 // GET /tiktok/auth-url?clientId=xxx ? returns TikTok auth URL for Electron
-async function handleTikTokAuthUrl(req: Request, res: Response) {
+function buildTikTokAuthUrl(clientId: string, redirectUri: string) {
+  const scopes = ['user.info.basic', 'video.upload'];
+  const authUrl = new URL('https://www.tiktok.com/v2/auth/authorize/');
+  authUrl.searchParams.set('client_key', TIKTOK_CLIENT_KEY);
+  authUrl.searchParams.set('response_type', 'code');
+  authUrl.searchParams.set('scope', scopes.join(','));
+  authUrl.searchParams.set('redirect_uri', redirectUri);
+  authUrl.searchParams.set('state', encodeState(clientId));
+  return authUrl.toString();
+}
+
+async function handleTikTokAuthUrl(req: Request, res: Response, redirectUri: string) {
   try {
     const clientId = typeof req.query.clientId === 'string' ? req.query.clientId : '';
     if (!clientId) {
@@ -32,22 +124,14 @@ async function handleTikTokAuthUrl(req: Request, res: Response) {
       return;
     }
 
-    const scopes = ['user.info.basic', 'video.upload'];
-    const authUrl = new URL('https://www.tiktok.com/v2/auth/authorize/');
-    authUrl.searchParams.set('client_key', TIKTOK_CLIENT_KEY);
-    authUrl.searchParams.set('response_type', 'code');
-    authUrl.searchParams.set('scope', scopes.join(','));
-    authUrl.searchParams.set('redirect_uri', ELECTRON_REDIRECT_URI);
-    authUrl.searchParams.set('state', encodeState(clientId));
-
-    res.json({ success: true, data: { authUrl: authUrl.toString() } });
+    res.json({ success: true, data: { authUrl: buildTikTokAuthUrl(clientId, redirectUri) } });
   } catch (error) {
     res.status(500).json({ success: false, error: String(error) });
   }
 }
 
-router.get('/tiktok/auth', handleTikTokAuthUrl);
-router.get('/tiktok/auth-url', handleTikTokAuthUrl);
+router.get('/tiktok/auth', (req, res) => void handleTikTokAuthUrl(req, res, TIKTOK_REDIRECT_URI));
+router.get('/tiktok/auth-url', (req, res) => void handleTikTokAuthUrl(req, res, ELECTRON_REDIRECT_URI));
 
 // POST /tiktok/exchange { code, clientId } ? exchanges code for tokens, saves binding
 router.post('/tiktok/exchange', async (req, res) => {
@@ -62,31 +146,19 @@ router.post('/tiktok/exchange', async (req, res) => {
       return;
     }
 
-    // Exchange code for tokens
-    const tokenRes = await fetch('https://open.tiktokapis.com/v2/oauth/token/', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        client_key: TIKTOK_CLIENT_KEY,
-        client_secret: TIKTOK_CLIENT_SECRET,
-        code,
-        grant_type: 'authorization_code',
-        redirect_uri: ELECTRON_REDIRECT_URI,
-      }),
-    });
-    const tokenData: any = await tokenRes.json();
+    const { tokenRes, tokenData } = await exchangeTikTokToken(code, ELECTRON_REDIRECT_URI);
     if (!tokenRes.ok || (tokenData.error?.code && tokenData.error.code !== 'ok')) {
-      res.status(400).json({ success: false, error: tokenData.error?.message || 'Token exchange failed' });
+      res.status(400).json({ success: false, error: describeTikTokTokenError(tokenData) });
       return;
     }
 
-    const accessToken = tokenData.data?.access_token;
-    const openId = tokenData.data?.open_id;
-    const expiresIn = tokenData.data?.expires_in;
-    if (!accessToken || !openId || !expiresIn) {
-      res.status(400).json({ success: false, error: 'Missing token data' });
+    const tokenFields = readTikTokTokenFields(tokenData);
+    const missingFields = missingTikTokTokenFields(tokenFields);
+    if (missingFields.length) {
+      res.status(400).json({ success: false, error: `Missing token fields: ${missingFields.join(', ')}` });
       return;
     }
+    const { accessToken, refreshToken, openId, expiresIn, scope } = tokenFields;
 
     // Get user info
     const userRes = await fetch('https://open.tiktokapis.com/v2/user/info/?fields=open_id,display_name,username', {
@@ -102,9 +174,9 @@ router.post('/tiktok/exchange', async (req, res) => {
         platformUserId: openId,
         username,
         accessToken,
-        refreshToken: tokenData.data.refresh_token || null,
+        refreshToken: refreshToken || null,
         expiresAt: new Date(Date.now() + expiresIn * 1000),
-        scope: tokenData.data.scope || null,
+        scope: scope || null,
         status: 'active',
         active: true,
       },
@@ -115,9 +187,9 @@ router.post('/tiktok/exchange', async (req, res) => {
         platformUserId: openId,
         username,
         accessToken,
-        refreshToken: tokenData.data.refresh_token || null,
+        refreshToken: refreshToken || null,
         expiresAt: new Date(Date.now() + expiresIn * 1000),
-        scope: tokenData.data.scope || null,
+        scope: scope || null,
         status: 'active',
         active: true,
       },
@@ -147,30 +219,25 @@ router.get('/tiktok/callback', async (req, res) => {
     }
 
     const { clientId } = decodeState(state);
-    const tokenRes = await fetch('https://open.tiktokapis.com/v2/oauth/token/', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        client_key: TIKTOK_CLIENT_KEY,
-        client_secret: TIKTOK_CLIENT_SECRET,
-        code,
-        grant_type: 'authorization_code',
-        redirect_uri: TIKTOK_REDIRECT_URI,
-      }),
-    });
-    const tokenData: any = await tokenRes.json();
+    const { tokenRes, tokenData } = await exchangeTikTokToken(code, TIKTOK_REDIRECT_URI);
     if (!tokenRes.ok || (tokenData.error?.code && tokenData.error.code !== 'ok')) {
-      res.status(400).send(`Token error: ${tokenData.error?.message || JSON.stringify(tokenData)}`);
+      res.status(400).send(`Token error: ${describeTikTokTokenError(tokenData)}`);
       return;
     }
 
-    const accessToken = tokenData.data?.access_token;
-    const openId = tokenData.data?.open_id;
-    const expiresIn = tokenData.data?.expires_in;
-    if (!accessToken || !openId || !expiresIn) {
-      res.status(400).send('Token error: missing token data');
+    const tokenFields = readTikTokTokenFields(tokenData);
+    const missingFields = missingTikTokTokenFields(tokenFields);
+    if (missingFields.length) {
+      const message = `Missing token fields: ${missingFields.join(', ')}`;
+      console.error('TikTok token exchange missing fields', {
+        missingFields,
+        status: tokenRes.status,
+        body: redactTikTokTokenBody(tokenData),
+      });
+      res.status(400).send(`Token error: ${message}`);
       return;
     }
+    const { accessToken, refreshToken, openId, expiresIn, scope } = tokenFields;
 
     const userRes = await fetch('https://open.tiktokapis.com/v2/user/info/?fields=open_id,display_name,username', {
       headers: { Authorization: `Bearer ${accessToken}` },
@@ -182,16 +249,16 @@ router.get('/tiktok/callback', async (req, res) => {
       where: { clientId_platform_accountUsername: { clientId, platform: 'tiktok', accountUsername: username } },
       update: {
         platformUserId: openId, username, accessToken,
-        refreshToken: tokenData.data.refresh_token || null,
+        refreshToken: refreshToken || null,
         expiresAt: new Date(Date.now() + expiresIn * 1000),
-        scope: tokenData.data.scope || null, status: 'active', active: true,
+        scope: scope || null, status: 'active', active: true,
       },
       create: {
         clientId, platform: 'tiktok', accountUsername: username,
         platformUserId: openId, username, accessToken,
-        refreshToken: tokenData.data.refresh_token || null,
+        refreshToken: refreshToken || null,
         expiresAt: new Date(Date.now() + expiresIn * 1000),
-        scope: tokenData.data.scope || null, status: 'active', active: true,
+        scope: scope || null, status: 'active', active: true,
       },
     });
 
