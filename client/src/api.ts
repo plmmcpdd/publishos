@@ -218,7 +218,7 @@ export async function fetchTikTokBindings(): Promise<TikTokBinding[]> {
 export async function getTikTokAuthUrl(): Promise<string> {
   const clientId = requireClientId();
   const data = await request<{ success: boolean; data: { authUrl: string } }>(
-    `/tiktok/auth-url?clientId=${encodeURIComponent(clientId)}`,
+    `/tiktok/auth?clientId=${encodeURIComponent(clientId)}`,
   );
   return data.data.authUrl;
 }
