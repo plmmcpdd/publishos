@@ -20,7 +20,7 @@ function tikTokBindingLabel(binding: TikTokBinding) {
   const name = cleanTikTokName(binding.displayName)
     || cleanTikTokName(binding.username)
     || cleanTikTokName(binding.accountUsername);
-  if (name) return name.startsWith('@') ? name : `@${name}`;
+  if (name) return name.startsWith('@') ? name.slice(1) : name;
 
   const openId = cleanTikTokName(binding.platformUserId || binding.openId);
   return openId ? `TikTok User ${openId.slice(-8)}` : 'TikTok Account';

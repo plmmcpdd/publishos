@@ -130,6 +130,60 @@ function presentTikTokBindingName(binding: {
     || fallbackTikTokName(binding.platformUserId);
 }
 
+async function saveTikTokBinding(input: {
+  clientId: string;
+  username: string;
+  openId: string;
+  accessToken: string;
+  refreshToken?: string | null;
+  expiresIn: number;
+  scope?: string | null;
+}) {
+  const existingBinding = await prisma.accountBinding.findFirst({
+    where: {
+      clientId: input.clientId,
+      platform: 'tiktok',
+      platformUserId: input.openId,
+    },
+  });
+
+  const data = {
+    accountUsername: input.username,
+    platformUserId: input.openId,
+    username: input.username,
+    accessToken: input.accessToken,
+    refreshToken: input.refreshToken || null,
+    expiresAt: new Date(Date.now() + input.expiresIn * 1000),
+    scope: input.scope || null,
+    status: 'active',
+    active: true,
+  };
+
+  if (existingBinding) {
+    await prisma.accountBinding.update({
+      where: { id: existingBinding.id },
+      data,
+    });
+    return;
+  }
+
+  await prisma.accountBinding.upsert({
+    where: {
+      clientId_platform_accountUsername: {
+        clientId: input.clientId,
+        platform: 'tiktok',
+        accountUsername: input.username,
+      },
+    },
+    update: data,
+    create: {
+      clientId: input.clientId,
+      platform: 'tiktok',
+      ...data,
+    },
+  });
+}
+
 // ---- Electron OAuth endpoints ----
 
 // GET /tiktok/auth-url?clientId=xxx → returns TikTok auth URL for Electron
@@ -193,38 +247,20 @@ router.post('/tiktok/exchange', async (req, res) => {
     const { accessToken, refreshToken, openId, expiresIn, scope } = tokenFields;
 
     // Get user info
-    const userRes = await fetch('https://open.tiktokapis.com/v2/user/info/?fields=open_id,display_name,username', {
+    const userRes = await fetch('https://open.tiktokapis.com/v2/user/info/?fields=open_id,union_id,avatar_url,display_name', {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
     const userData: any = await userRes.json();
     const username = getTikTokDisplayName(userData, openId);
 
-    // Save binding
-    await prisma.accountBinding.upsert({
-      where: { clientId_platform_accountUsername: { clientId, platform: 'tiktok', accountUsername: username } },
-      update: {
-        platformUserId: openId,
-        username,
-        accessToken,
-        refreshToken: refreshToken || null,
-        expiresAt: new Date(Date.now() + expiresIn * 1000),
-        scope: scope || null,
-        status: 'active',
-        active: true,
-      },
-      create: {
+    await saveTikTokBinding({
         clientId,
-        platform: 'tiktok',
-        accountUsername: username,
-        platformUserId: openId,
         username,
+        openId,
         accessToken,
-        refreshToken: refreshToken || null,
-        expiresAt: new Date(Date.now() + expiresIn * 1000),
-        scope: scope || null,
-        status: 'active',
-        active: true,
-      },
+        refreshToken,
+        expiresIn,
+        scope,
     });
 
     res.json({
@@ -271,27 +307,20 @@ router.get('/tiktok/callback', async (req, res) => {
     }
     const { accessToken, refreshToken, openId, expiresIn, scope } = tokenFields;
 
-    const userRes = await fetch('https://open.tiktokapis.com/v2/user/info/?fields=open_id,display_name,username', {
+    const userRes = await fetch('https://open.tiktokapis.com/v2/user/info/?fields=open_id,union_id,avatar_url,display_name', {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
     const userData: any = await userRes.json();
     const username = getTikTokDisplayName(userData, openId);
 
-    await prisma.accountBinding.upsert({
-      where: { clientId_platform_accountUsername: { clientId, platform: 'tiktok', accountUsername: username } },
-      update: {
-        platformUserId: openId, username, accessToken,
-        refreshToken: refreshToken || null,
-        expiresAt: new Date(Date.now() + expiresIn * 1000),
-        scope: scope || null, status: 'active', active: true,
-      },
-      create: {
-        clientId, platform: 'tiktok', accountUsername: username,
-        platformUserId: openId, username, accessToken,
-        refreshToken: refreshToken || null,
-        expiresAt: new Date(Date.now() + expiresIn * 1000),
-        scope: scope || null, status: 'active', active: true,
-      },
+    await saveTikTokBinding({
+      clientId,
+      username,
+      openId,
+      accessToken,
+      refreshToken,
+      expiresIn,
+      scope,
     });
 
     res.send(`
