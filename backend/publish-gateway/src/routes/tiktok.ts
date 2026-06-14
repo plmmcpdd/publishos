@@ -32,7 +32,7 @@ async function handleTikTokAuthUrl(req: Request, res: Response) {
       return;
     }
 
-    const scopes = ['user.info.basic', 'video.publish'];
+    const scopes = ['user.info.basic', 'video.upload'];
     const authUrl = new URL('https://www.tiktok.com/v2/auth/authorize/');
     authUrl.searchParams.set('client_key', TIKTOK_CLIENT_KEY);
     authUrl.searchParams.set('response_type', 'code');
