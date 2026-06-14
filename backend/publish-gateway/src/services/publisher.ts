@@ -86,8 +86,8 @@ export async function publishToTikTok(jobId: string): Promise<void> {
     const videoSize = videoBuffer.length;
     console.log(`[publish] Downloaded video: ${videoSize} bytes`);
 
-    // Step 2: Init upload (UPLOAD_FROM_DEVICE requires video.upload scope)
-    const initRes = await fetch('https://open.tiktokapis.com/v2/post/publish/video/init/', {
+    // Step 2: Init upload (inbox flow only requires video.upload scope)
+    const initRes = await fetch('https://open.tiktokapis.com/v2/post/publish/inbox/video/init/', {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${accessToken}`,
