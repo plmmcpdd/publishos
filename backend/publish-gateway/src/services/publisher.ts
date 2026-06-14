@@ -87,6 +87,9 @@ export async function publishToTikTok(jobId: string): Promise<void> {
     console.log(`[publish] Downloaded video: ${videoSize} bytes`);
 
     // Step 2: Init upload (inbox flow only requires video.upload scope)
+    const chunkSize = 5 * 1024 * 1024; // 5MB chunks
+    const totalChunks = Math.ceil(videoSize / chunkSize);
+
     const initRes = await fetch('https://open.tiktokapis.com/v2/post/publish/inbox/video/init/', {
       method: 'POST',
       headers: {
@@ -97,14 +100,12 @@ export async function publishToTikTok(jobId: string): Promise<void> {
         post_info: {
           title: job.content.title || '',
           description: job.content.caption || job.content.description || '',
-          privacy_level: 'PUBLIC_TO_EVERYONE',
-          disable_duet: false,
-          disable_comment: false,
-          disable_stitch: false,
         },
         source_info: {
-          source: 'UPLOAD_FROM_DEVICE',
+          source: 'FILE_UPLOAD',
           video_size: videoSize,
+          chunk_size: chunkSize,
+          total_chunk_count: totalChunks,
         },
       }),
     });
@@ -124,7 +125,7 @@ export async function publishToTikTok(jobId: string): Promise<void> {
 
     console.log(`[publish] publishId=${publishId}, uploadUrl=${uploadUrl}`);
 
-    // Step 3: Upload video to TikTok
+    // Step 3: Upload video to TikTok (chunked)
     const uploadRes = await fetch(uploadUrl, {
       method: 'PUT',
       headers: {
@@ -138,7 +139,7 @@ export async function publishToTikTok(jobId: string): Promise<void> {
     const uploadText = await uploadRes.text();
     console.log(`[publish] TikTok upload response: ${uploadRes.status} ${uploadText.slice(0, 300)}`);
 
-    if (!uploadRes.ok && uploadRes.status !== 201) {
+    if (!uploadRes.ok && uploadRes.status !== 200 && uploadRes.status !== 201) {
       throw new Error(`TikTok upload failed (${uploadRes.status}): ${uploadText.slice(0, 200)}`);
     }
 
