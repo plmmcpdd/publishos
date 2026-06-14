@@ -77,19 +77,7 @@ export async function publishToTikTok(jobId: string): Promise<void> {
 
     console.log(`[publish] jobId=${jobId} videoUrl=${videoUrl}`);
 
-    // Step 1: Download video from our server
-    const videoRes = await fetch(videoUrl);
-    if (!videoRes.ok) {
-      throw new Error(`Failed to download video from ${videoUrl}: ${videoRes.status}`);
-    }
-    const videoBuffer = Buffer.from(await videoRes.arrayBuffer());
-    const videoSize = videoBuffer.length;
-    console.log(`[publish] Downloaded video: ${videoSize} bytes`);
-
-    // Step 2: Init upload (inbox flow only requires video.upload scope)
-    const chunkSize = 5 * 1024 * 1024; // 5MB chunks
-    const totalChunks = Math.ceil(videoSize / chunkSize);
-
+    // Step 2: Init upload (inbox flow with PULL_FROM_URL, only needs video.upload scope)
     const initRes = await fetch('https://open.tiktokapis.com/v2/post/publish/inbox/video/init/', {
       method: 'POST',
       headers: {
@@ -102,10 +90,8 @@ export async function publishToTikTok(jobId: string): Promise<void> {
           description: job.content.caption || job.content.description || '',
         },
         source_info: {
-          source: 'FILE_UPLOAD',
-          video_size: videoSize,
-          chunk_size: chunkSize,
-          total_chunk_count: totalChunks,
+          source: 'PULL_FROM_URL',
+          video_url: videoUrl,
         },
       }),
     });
@@ -119,29 +105,9 @@ export async function publishToTikTok(jobId: string): Promise<void> {
     }
 
     const publishId = initData.data?.publish_id;
-    const uploadUrl = initData.data?.upload_url;
-    if (!publishId) throw new Error('TikTok init failed: missing publish_id');
-    if (!uploadUrl) throw new Error('TikTok init failed: missing upload_url');
+    if (!publishId) throw new Error('TikTok init failed: missing publish_id in response');
 
-    console.log(`[publish] publishId=${publishId}, uploadUrl=${uploadUrl}`);
-
-    // Step 3: Upload video to TikTok (chunked)
-    const uploadRes = await fetch(uploadUrl, {
-      method: 'PUT',
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        'Content-Type': 'video/mp4',
-        'Content-Range': `bytes 0-${videoSize - 1}/${videoSize}`,
-      },
-      body: videoBuffer,
-    });
-
-    const uploadText = await uploadRes.text();
-    console.log(`[publish] TikTok upload response: ${uploadRes.status} ${uploadText.slice(0, 300)}`);
-
-    if (!uploadRes.ok && uploadRes.status !== 200 && uploadRes.status !== 201) {
-      throw new Error(`TikTok upload failed (${uploadRes.status}): ${uploadText.slice(0, 200)}`);
-    }
+    console.log(`[publish] publishId=${publishId}, TikTok will pull video from URL`);
 
     await prisma.publishJob.update({
       where: { id: jobId },
