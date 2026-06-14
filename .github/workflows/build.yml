@@ -38,11 +38,22 @@ jobs:
         shell: bash
         env:
           VITE_API_URL: "http://104.238.181.32:3000/v1"
-      - name: Upload artifacts
+      - name: List release files
+        run: ls -la client/release/
+        shell: bash
+      - name: Upload Windows installer
+        if: matrix.os == 'windows-latest'
         uses: actions/upload-artifact@v4
         with:
-          name: publishos-${{ matrix.os }}
-          path: client/release/
+          name: PublishOS-Windows-Installer
+          path: client/release/*.exe
+          retention-days: 3
+      - name: Upload Mac DMG
+        if: matrix.os == 'macos-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: PublishOS-Mac-DMG
+          path: client/release/*.dmg
           retention-days: 3
 
   release:
@@ -56,6 +67,9 @@ jobs:
         with:
           path: artifacts/
 
+      - name: List artifacts
+        run: find artifacts/ -type f | head -20
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
@@ -66,5 +80,5 @@ jobs:
           prerelease: false
           generate_release_notes: true
           files: |
-            artifacts/publishos-windows/**/*Setup*.exe
-            artifacts/publishos-macos/**/*.dmg
+            artifacts/PublishOS-Windows-Installer/*.exe
+            artifacts/PublishOS-Mac-DMG/*.dmg
