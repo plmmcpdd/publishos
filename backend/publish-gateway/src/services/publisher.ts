@@ -148,7 +148,7 @@ export async function publishToTikTok(jobId: string): Promise<void> {
     });
 
     console.log(`[publish] publishId=${publishId}, polling status...`);
-    await pollPublishStatus(jobId, publishId, accessToken);
+    await pollPublishStatus(jobId, job.contentId, publishId, accessToken);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`[publish] jobId=${jobId} FAILED:`, message);
@@ -169,7 +169,7 @@ export async function publishToTikTok(jobId: string): Promise<void> {
   }
 }
 
-async function pollPublishStatus(jobId: string, publishId: string, accessToken: string): Promise<void> {
+async function pollPublishStatus(jobId: string, contentId: string, publishId: string, accessToken: string): Promise<void> {
   const maxRetries = 30;
   for (let attempt = 0; attempt < maxRetries; attempt += 1) {
     await new Promise((resolve) => setTimeout(resolve, 10_000));
@@ -202,7 +202,7 @@ async function pollPublishStatus(jobId: string, publishId: string, accessToken: 
         },
       });
       await prisma.content.update({
-        where: { id: job.contentId },
+        where: { id: contentId },
         data: { status: 'published', publishedAt },
       });
       return;
