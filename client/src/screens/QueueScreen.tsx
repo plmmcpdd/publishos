@@ -38,11 +38,21 @@ function resolveMediaUrl(url: string | null | undefined): string | null {
   return `${serverBase}${url.startsWith('/') ? '' : '/'}${url}`;
 }
 
+function MediaFallback() {
+  return (
+    <div className="empty-state" style={{ minHeight: 120, margin: '14px 0' }}>
+      <div className="empty-state-title">Preview unavailable</div>
+      <div className="empty-state-sub">The media file could not be loaded.</div>
+    </div>
+  );
+}
+
 export default function QueueScreen() {
   const [contents, setContents] = useState<ContentItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [publishNotice, setPublishNotice] = useState('');
+  const [failedMedia, setFailedMedia] = useState<Record<string, true>>({});
 
   const loadContents = async () => {
     setLoading(true);
@@ -151,14 +161,16 @@ export default function QueueScreen() {
                         <video
                           controls
                           src={src}
-                          style={{ width: '100%', maxHeight: 260, borderRadius: 12 }}
+                          style={{ width: '100%', maxHeight: 260, borderRadius: 12, display: failedMedia[content.id] ? 'none' : 'block' }}
                           onError={(e) => {
                             (e.target as HTMLVideoElement).style.display = 'none';
+                            setFailedMedia((prev) => ({ ...prev, [content.id]: true }));
                           }}
                         />
                       ) : null;
                     })()}
                   </ErrorBoundary>
+                  {failedMedia[content.id] && <MediaFallback />}
                 </div>
               ) : content.thumbnailUrl ? (
                 (() => {

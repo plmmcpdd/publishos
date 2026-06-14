@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Request, Response, Router } from 'express';
 import { prisma } from '../lib/prisma';
 
 const router = Router();
@@ -19,8 +19,8 @@ function decodeState(state: string): { clientId: string; ts?: number } {
 
 // ---- Electron OAuth endpoints ----
 
-// GET /tiktok/auth-url?clientId=xxx → returns TikTok auth URL for Electron
-router.get('/tiktok/auth-url', async (req, res) => {
+// GET /tiktok/auth-url?clientId=xxx ? returns TikTok auth URL for Electron
+async function handleTikTokAuthUrl(req: Request, res: Response) {
   try {
     const clientId = typeof req.query.clientId === 'string' ? req.query.clientId : '';
     if (!clientId) {
@@ -44,9 +44,12 @@ router.get('/tiktok/auth-url', async (req, res) => {
   } catch (error) {
     res.status(500).json({ success: false, error: String(error) });
   }
-});
+}
 
-// POST /tiktok/exchange { code, clientId } → exchanges code for tokens, saves binding
+router.get('/tiktok/auth', handleTikTokAuthUrl);
+router.get('/tiktok/auth-url', handleTikTokAuthUrl);
+
+// POST /tiktok/exchange { code, clientId } ? exchanges code for tokens, saves binding
 router.post('/tiktok/exchange', async (req, res) => {
   try {
     const { code, clientId } = req.body;
