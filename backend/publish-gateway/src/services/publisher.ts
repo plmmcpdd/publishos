@@ -87,9 +87,9 @@ export async function publishToTikTok(jobId: string): Promise<void> {
     console.log(`[publish] Downloaded video: ${videoSize} bytes`);
 
     // Step 2: Init upload (FILE_UPLOAD via inbox, only needs video.upload scope)
-    // For small files (< chunk_size), use single chunk
-    const chunkSize = videoSize; // single chunk for small files
-    const totalChunks = 1;
+    const MAX_CHUNK = 5 * 1024 * 1024; // 5MB max per chunk
+    const chunkSize = Math.min(MAX_CHUNK, videoSize);
+    const totalChunks = Math.ceil(videoSize / chunkSize);
 
     const initRes = await fetch('https://open.tiktokapis.com/v2/post/publish/inbox/video/init/', {
       method: 'POST',
