@@ -64,7 +64,7 @@ export async function publishToTikTok(jobId: string): Promise<void> {
 
   try {
     if (!TIKTOK_CLIENT_KEY || !TIKTOK_CLIENT_SECRET) {
-      throw new Error('TikTok credentials are not configured');
+      throw new Error('TikTok credentials are not configured on server');
     }
 
     await prisma.publishJob.update({
@@ -74,6 +74,8 @@ export async function publishToTikTok(jobId: string): Promise<void> {
 
     const accessToken = await getValidAccessToken(job.accountBinding);
     const videoUrl = resolvePublicMediaUrl(job.content.videoUrl);
+
+    console.log(`[publish] jobId=${jobId} videoUrl=${videoUrl}`);
 
     const initRes = await fetch('https://open.tiktokapis.com/v2/post/publish/video/init/', {
       method: 'POST',
@@ -98,21 +100,26 @@ export async function publishToTikTok(jobId: string): Promise<void> {
     });
 
     const initData: any = await initRes.json();
+    console.log(`[publish] TikTok init response:`, JSON.stringify(initData).slice(0, 500));
+
     if (!initRes.ok || initData.error?.code !== 'ok') {
-      throw new Error(`TikTok init failed: ${initData.error?.message || JSON.stringify(initData)}`);
+      const errMsg = initData.error?.message || initData.message || JSON.stringify(initData);
+      throw new Error(`TikTok init failed (${initRes.status}): ${errMsg}`);
     }
 
     const publishId = initData.data?.publish_id;
-    if (!publishId) throw new Error('TikTok init failed: missing publish_id');
+    if (!publishId) throw new Error('TikTok init failed: missing publish_id in response');
 
     await prisma.publishJob.update({
       where: { id: jobId },
       data: { publishId, status: 'publishing' },
     });
 
+    console.log(`[publish] publishId=${publishId}, polling status...`);
     await pollPublishStatus(jobId, publishId, accessToken);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    console.error(`[publish] jobId=${jobId} FAILED:`, message);
     await prisma.publishJob.update({
       where: { id: jobId },
       data: {

@@ -339,7 +339,7 @@ router.get('/tiktok/callback', async (req, res) => {
 router.get('/tiktok/bindings/:clientId', async (req, res) => {
   try {
     const bindings = await prisma.accountBinding.findMany({
-      where: { clientId: req.params.clientId, platform: 'tiktok' },
+      where: { clientId: req.params.clientId, platform: 'tiktok', active: true },
       select: {
         id: true,
         platform: true,

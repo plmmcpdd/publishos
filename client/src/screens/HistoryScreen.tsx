@@ -17,8 +17,14 @@ function PlatformTag({ platform }: { platform: string }) {
 }
 
 function StatusBadge({ status }: { status: string }) {
-  const label = status === 'published' ? 'Published' : 'Rejected';
-  return <span className={`status-badge ${status === 'published' ? 'status-published' : 'status-rejected'}`}>{label}</span>;
+  const labels: Record<string, string> = {
+    published: 'Published',
+    rejected: 'Rejected',
+    failed: 'Failed',
+    uploading: 'Uploading',
+    publishing: 'Publishing',
+  };
+  return <span className={`status-badge ${status === 'published' ? 'status-published' : status === 'failed' ? 'status-rejected' : 'status-approved'}`}>{labels[status] || status}</span>;
 }
 
 function resolveMediaUrl(url: string | null | undefined): string | null {

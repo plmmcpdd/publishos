@@ -193,7 +193,7 @@ export async function fetchClientHistory(): Promise<ContentItem[]> {
   const data = await request<{ success: boolean; data: ApiContent[] }>(
     `/content?clientId=${encodeURIComponent(clientId)}`,
   );
-  return data.data.map(mapContent).filter((item) => item.status === 'published' || item.status === 'rejected');
+  return data.data.map(mapContent).filter((item) => item.status === 'published' || item.status === 'rejected' || item.status === 'failed');
 }
 
 // ---- TikTok binding ----
