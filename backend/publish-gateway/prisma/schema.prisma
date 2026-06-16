@@ -25,6 +25,7 @@ model Client {
   updatedAt       DateTime         @updatedAt
   accountBindings AccountBinding[]
   contents        Content[]
+  performanceMetrics PerformanceMetrics[]
 }
 
 model AccountBinding {
@@ -78,6 +79,7 @@ model Content {
   aiDisclosureConfirmed Boolean     @default(false)
   aiDisclosureConfirmedAt DateTime?
   publishLogs       PublishLog[]
+  performanceMetrics PerformanceMetrics[]
 }
 
 model ContentAsset {
@@ -140,6 +142,38 @@ model PublishJob {
   createdAt           DateTime       @default(now())
   updatedAt           DateTime       @updatedAt
   history             JobHistory[]
+  performanceMetrics  PerformanceMetrics[]
+}
+
+model PerformanceMetrics {
+  id              String     @id @default(cuid())
+  clientId        String
+  client          Client     @relation(fields: [clientId], references: [id])
+  contentId       String
+  content         Content    @relation(fields: [contentId], references: [id])
+  publishJobId    String
+  publishJob      PublishJob @relation(fields: [publishJobId], references: [id], onDelete: Cascade)
+  platform        String
+  platformPostId  String
+  views           Int        @default(0)
+  likes           Int        @default(0)
+  comments        Int        @default(0)
+  shares          Int        @default(0)
+  saves           Int        @default(0)
+  reach           Int        @default(0)
+  impressions     Int        @default(0)
+  engagementRate  Float      @default(0)
+  completionRate  Float?
+  collectedAt     DateTime   @default(now())
+  metricDate      String
+  period          String     @default("daily")
+  createdAt       DateTime   @default(now())
+
+  @@unique([publishJobId, period, metricDate])
+  @@index([clientId, collectedAt])
+  @@index([clientId, platform])
+  @@index([contentId])
+  @@index([publishJobId])
 }
 
 model JobHistory {

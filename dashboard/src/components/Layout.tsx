@@ -6,9 +6,10 @@ const navItems = [
   { path: '/contents', label: 'Content', icon: '03' },
   { path: '/customers', label: 'Clients', icon: '04' },
   { path: '/social-accounts', label: 'Social Accounts', icon: '05' },
-  { path: '/monitor', label: 'Monitor', icon: '06' },
-  { path: '/audit', label: 'Audit Logs', icon: '07' },
-  { path: '/settings', label: 'Settings', icon: '08' },
+  { path: '/analytics', label: 'Analytics', icon: '06' },
+  { path: '/monitor', label: 'Monitor', icon: '07' },
+  { path: '/audit', label: 'Audit Logs', icon: '08' },
+  { path: '/settings', label: 'Settings', icon: '09' },
 ];
 
 export default function Layout() {

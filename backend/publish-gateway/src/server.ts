@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import path from 'path';
+import cron from 'node-cron';
 
 import contentRoutes from './routes/content';
 import authRoutes from './routes/auth';
@@ -14,7 +15,9 @@ import apiContentRoutes from './routes/api-contents';
 import statsRoutes from './routes/stats';
 import auditLogRoutes from './routes/audit-logs';
 import tiktokRoutes from './routes/tiktok';
+import metricsRoutes from './routes/metrics';
 import { languageMiddleware } from './middleware/language';
+import { collectAllMetrics } from './services/metrics-collector';
 
 dotenv.config();
 
@@ -42,10 +45,17 @@ app.use('/v1/client', clientRoutes);
 app.use('/v1/tasks', taskRoutes);
 app.use('/v1/audit', auditRoutes);
 app.use('/v1/stats', statsRoutes);
+app.use('/v1', metricsRoutes);
 app.use('/v1/audit-logs', auditLogRoutes);
 app.use('/api/v1/contents', apiContentRoutes);
 app.use('/api/v1/stats', statsRoutes);
+app.use('/api/v1', metricsRoutes);
 app.use('/api/v1/audit-logs', auditLogRoutes);
+
+cron.schedule('0 2 * * *', async () => {
+  console.log('[cron] Running daily metrics collection...');
+  await collectAllMetrics();
+});
 
 // 404 handler
 app.use((_req, res) => {

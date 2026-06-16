@@ -10,6 +10,7 @@ import Settings from './pages/Settings';
 import Monitor from './pages/Monitor';
 import AuditLog from './pages/AuditLog';
 import SocialAccounts from './pages/SocialAccounts';
+import Analytics from './pages/Analytics';
 
 function App() {
   const [authed, setAuthed] = useState(false);
@@ -32,6 +33,7 @@ function App() {
           <Route path="customers" element={<CustomerList />} />
           <Route path="clients" element={<CustomerList />} />
           <Route path="social-accounts" element={<SocialAccounts />} />
+          <Route path="analytics" element={<Analytics />} />
           <Route path="monitor" element={<Monitor />} />
           <Route path="audit" element={<AuditLog />} />
           <Route path="settings" element={<Settings />} />

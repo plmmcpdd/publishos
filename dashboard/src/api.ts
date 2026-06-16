@@ -67,6 +67,37 @@ export interface AuditLog {
   createdAt: string;
 }
 
+export interface MetricsOverview {
+  totalViews: number;
+  totalLikes: number;
+  totalComments: number;
+  totalShares: number;
+  totalSaves: number;
+  totalReach: number;
+  totalImpressions: number;
+  avgEngagementRate: number;
+  byPlatform: Record<string, { views: number; likes: number; comments: number; shares: number }>;
+  dataPoints: number;
+  period: string;
+}
+
+export interface TopMetric {
+  id: string;
+  contentId: string;
+  platform: string;
+  platformPostId: string;
+  views: number;
+  likes: number;
+  comments: number;
+  shares: number;
+  engagementRate: number;
+  collectedAt: string;
+  content?: {
+    id: string;
+    title: string;
+  };
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
   if (!(init?.body instanceof FormData) && !headers.has('Content-Type')) {
@@ -217,4 +248,22 @@ export async function uploadVideo(file: File): Promise<{ url: string; filename: 
 export async function fetchAuditLogs(): Promise<AuditLog[]> {
   const data = await request<{ data: AuditLog[] }>('/audit-logs');
   return data.data;
+}
+
+export async function fetchMetricsOverview(clientId: string, days: number): Promise<MetricsOverview> {
+  const data = await request<{ success: boolean; data: MetricsOverview }>(
+    `/metrics/overview?clientId=${encodeURIComponent(clientId)}&days=${days}`,
+  );
+  return data.data;
+}
+
+export async function fetchTopMetrics(clientId: string, limit = 5): Promise<TopMetric[]> {
+  const data = await request<{ success: boolean; data: TopMetric[] }>(
+    `/metrics/top?clientId=${encodeURIComponent(clientId)}&limit=${limit}`,
+  );
+  return data.data;
+}
+
+export async function triggerMetricsCollection(): Promise<void> {
+  await request('/metrics/collect', { method: 'POST' });
 }
