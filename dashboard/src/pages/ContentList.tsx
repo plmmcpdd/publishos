@@ -21,9 +21,15 @@ const statusClass: Record<string, string> = {
   failed: 'bg-red-100 text-red-800',
 };
 
-function formatStatus(status: string) {
-  return status.replace('_', ' ');
-}
+const statusLabel: Record<string, string> = {
+  draft: '草稿',
+  delivered: '已推送',
+  published: '已发布',
+  pending_review: '待审核',
+  approved: '已通过',
+  rejected: '已拒绝',
+  failed: '失败',
+};
 
 function formatDate(value?: string) {
   if (!value) return '-';
@@ -78,7 +84,7 @@ export default function ContentList() {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Delete this content?')) return;
+    if (!confirm('确定删除该内容？')) return;
     await deleteContent(id);
     await loadContents();
   };
@@ -89,7 +95,7 @@ export default function ContentList() {
       const uploaded = await uploadVideo(file);
       setNewContent((value) => ({ ...value, videoUrl: uploaded.url }));
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Upload failed');
+      setError(err instanceof Error ? err.message : '上传失败');
     }
   };
 
@@ -98,9 +104,9 @@ export default function ContentList() {
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
-        <h3 className="text-lg font-medium">Content Manager</h3>
+        <h3 className="text-lg font-medium">内容管理</h3>
         <button onClick={() => setShowCreate((value) => !value)} className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg">
-          + Create Content
+          + 创建内容
         </button>
       </div>
 
@@ -108,10 +114,10 @@ export default function ContentList() {
 
       {showCreate && (
         <div className="bg-gray-50 rounded-lg p-6 mb-6 border border-gray-200">
-          <h4 className="text-lg font-semibold mb-4">New Content</h4>
+          <h4 className="text-lg font-semibold mb-4">新建内容</h4>
           <div className="grid grid-cols-2 gap-4">
             <input
-              placeholder="Title"
+              placeholder="标题"
               value={newContent.title}
               onChange={(event) => setNewContent({ ...newContent, title: event.target.value })}
               className="border rounded px-3 py-2"
@@ -126,24 +132,24 @@ export default function ContentList() {
               <option value="facebook">Facebook</option>
             </select>
             <textarea
-              placeholder="Description"
+              placeholder="描述"
               value={newContent.description}
               onChange={(event) => setNewContent({ ...newContent, description: event.target.value })}
               className="border rounded px-3 py-2 col-span-2"
               rows={3}
             />
             <div className="col-span-2">
-              <label className="block text-sm font-medium text-gray-700 mb-1">Video</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">视频</label>
               <div className="flex gap-3">
                 <input
-                  placeholder="Video URL"
+                  placeholder="视频 URL"
                   value={newContent.videoUrl}
                   onChange={(event) => setNewContent({ ...newContent, videoUrl: event.target.value })}
                   className="border rounded px-3 py-2 flex-1"
                 />
-                <span className="self-center text-gray-400">or</span>
+                <span className="self-center text-gray-400">或</span>
                 <label className="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded cursor-pointer text-sm self-center">
-                  Upload
+                  上传
                   <input
                     type="file"
                     accept="video/*"
@@ -154,7 +160,7 @@ export default function ContentList() {
               </div>
             </div>
             <input
-              placeholder="Thumbnail URL"
+              placeholder="缩略图 URL"
               value={newContent.thumbnailUrl}
               onChange={(event) => setNewContent({ ...newContent, thumbnailUrl: event.target.value })}
               className="border rounded px-3 py-2"
@@ -164,7 +170,7 @@ export default function ContentList() {
               onChange={(event) => setNewContent({ ...newContent, clientId: event.target.value })}
               className="border rounded px-3 py-2 col-span-2"
             >
-              <option value="">Select Client</option>
+              <option value="">选择客户</option>
               {clients.map((client) => (
                 <option key={client.id} value={client.id}>{client.name}</option>
               ))}
@@ -172,31 +178,40 @@ export default function ContentList() {
           </div>
           <div className="flex gap-3 mt-4">
             <button onClick={() => void handleCreate()} className="px-4 py-2 bg-green-600 hover:bg-green-500 text-white rounded-lg">
-              Create Draft
+              创建草稿
             </button>
             <button onClick={() => setShowCreate(false)} className="px-4 py-2 bg-gray-300 hover:bg-gray-400 rounded-lg">
-              Cancel
+              取消
             </button>
           </div>
         </div>
       )}
 
       <div className="flex gap-2 mb-4">
-        {['all', 'draft', 'delivered', 'published', 'pending_review', 'approved', 'rejected', 'failed'].map((status) => (
+        {[
+          { key: 'all', label: '全部' },
+          { key: 'draft', label: '草稿' },
+          { key: 'delivered', label: '已推送' },
+          { key: 'published', label: '已发布' },
+          { key: 'pending_review', label: '待审核' },
+          { key: 'approved', label: '已通过' },
+          { key: 'rejected', label: '已拒绝' },
+          { key: 'failed', label: '失败' },
+        ].map((item) => (
           <button
-            key={status}
-            onClick={() => setFilter(status)}
-            className={`px-3 py-1 rounded text-sm ${filter === status ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-700'}`}
+            key={item.key}
+            onClick={() => setFilter(item.key)}
+            className={`px-3 py-1 rounded text-sm ${filter === item.key ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-700'}`}
           >
-            {status === 'all' ? 'All' : formatStatus(status)}
+            {item.label}
           </button>
         ))}
       </div>
 
       {loading ? (
-        <div className="bg-white rounded-xl p-8 text-center text-gray-500">Loading...</div>
+        <div className="bg-white rounded-xl p-8 text-center text-gray-500">加载中...</div>
       ) : filtered.length === 0 ? (
-        <div className="bg-white rounded-xl p-8 text-center text-gray-500">No content found</div>
+        <div className="bg-white rounded-xl p-8 text-center text-gray-500">暂无内容</div>
       ) : (
         <div className="space-y-3">
           {filtered.map((content) => (
@@ -206,22 +221,22 @@ export default function ContentList() {
                   <div className="flex items-center gap-3">
                     <h4 className="font-medium">{content.title}</h4>
                     <span className={`px-2 py-0.5 rounded text-xs ${statusClass[content.status] || 'bg-gray-100 text-gray-700'}`}>
-                      {formatStatus(content.status)}
+                      {statusLabel[content.status] || content.status}
                     </span>
                     <span className="bg-gray-100 px-2 py-0.5 rounded text-xs">{firstPlatform(content).toUpperCase()}</span>
                   </div>
                   {content.description && <p className="text-gray-500 text-sm mt-1">{content.description}</p>}
-                  {content.client && <p className="text-gray-500 text-sm mt-1">Client: {content.client.name}</p>}
-                  <p className="text-gray-400 text-xs mt-1">Created: {formatDate(content.createdAt)}</p>
+                  {content.client && <p className="text-gray-500 text-sm mt-1">客户：{content.client.name}</p>}
+                  <p className="text-gray-400 text-xs mt-1">创建时间：{formatDate(content.createdAt)}</p>
                 </div>
                 <div className="flex gap-2">
                   {content.status === 'draft' && (
                     <button onClick={() => void handleDeliver(content.id)} className="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded text-sm">
-                      Deliver
+                      推送
                     </button>
                   )}
                   <button onClick={() => void handleDelete(content.id)} className="px-3 py-1 bg-red-600 hover:bg-red-500 text-white rounded text-sm">
-                    Delete
+                    删除
                   </button>
                 </div>
               </div>

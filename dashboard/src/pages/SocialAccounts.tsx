@@ -21,7 +21,7 @@ export default function SocialAccounts() {
       try {
         setClients(await fetchClients());
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to load clients');
+        setError(err instanceof Error ? err.message : '加载客户失败');
       } finally {
         setLoading(false);
       }
@@ -38,7 +38,7 @@ export default function SocialAccounts() {
     try {
       setBindings(await fetchTikTokBindings(clientId));
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load bindings');
+      setError(err instanceof Error ? err.message : '加载绑定失败');
     }
   };
 
@@ -48,17 +48,17 @@ export default function SocialAccounts() {
       const authUrl = await fetchTikTokAuthUrl(selectedClient);
       window.open(authUrl, '_blank', 'noopener,noreferrer');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to start TikTok OAuth');
+      setError(err instanceof Error ? err.message : '启动 TikTok 授权失败');
     }
   };
 
   const disconnect = async (id: string) => {
-    if (!confirm('Disconnect this TikTok account?')) return;
+    if (!confirm('确定解绑该 TikTok 账号？')) return;
     try {
       await disconnectTikTokBinding(id);
       await loadBindings(selectedClient);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to disconnect account');
+      setError(err instanceof Error ? err.message : '解绑失败');
     }
   };
 
@@ -66,8 +66,8 @@ export default function SocialAccounts() {
     <div>
       <div className="mb-6 flex items-center justify-between">
         <div>
-          <h3 className="text-lg font-medium">Social Accounts</h3>
-          <p className="mt-1 text-sm text-gray-500">Connect client TikTok accounts for automatic publishing.</p>
+          <h3 className="text-lg font-medium">社交账号</h3>
+          <p className="mt-1 text-sm text-gray-500">绑定客户的 TikTok 账号以自动发布内容。</p>
         </div>
         {selectedClient && (
           <button
@@ -75,7 +75,7 @@ export default function SocialAccounts() {
             onClick={() => void connectTikTok()}
             className="rounded-lg bg-black px-4 py-2 text-sm font-medium text-white hover:bg-gray-800"
           >
-            Connect TikTok
+            绑定 TikTok
           </button>
         )}
       </div>
@@ -84,7 +84,7 @@ export default function SocialAccounts() {
 
       <div className="mb-6 rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
         <label className="mb-2 block text-sm font-medium text-gray-700" htmlFor="client-select">
-          Select Client
+          选择客户
         </label>
         <select
           id="client-select"
@@ -93,7 +93,7 @@ export default function SocialAccounts() {
           className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
           disabled={loading}
         >
-          <option value="">{loading ? 'Loading clients...' : 'Select a client'}</option>
+          <option value="">{loading ? '加载中...' : '选择客户'}</option>
           {clients.map((client) => (
             <option key={client.id} value={client.id}>
               {client.name} ({client.email})
@@ -107,12 +107,12 @@ export default function SocialAccounts() {
           <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4">
             <div>
               <h4 className="font-medium">TikTok</h4>
-              <p className="text-sm text-gray-500">{bindings.length} connected account(s)</p>
+              <p className="text-sm text-gray-500">{bindings.length} 个已绑定账号</p>
             </div>
           </div>
 
           {bindings.length === 0 ? (
-            <div className="px-5 py-8 text-center text-sm text-gray-500">No TikTok account connected.</div>
+            <div className="px-5 py-8 text-center text-sm text-gray-500">暂无 TikTok 账号绑定</div>
           ) : (
             <div className="divide-y divide-gray-100">
               {bindings.map((binding) => (
@@ -120,8 +120,8 @@ export default function SocialAccounts() {
                   <div>
                     <p className="font-medium">@{binding.username}</p>
                     <p className="text-sm text-gray-500">
-                      Status: {binding.status}
-                      {binding.expiresAt ? ` / Expires: ${new Date(binding.expiresAt).toLocaleDateString()}` : ''}
+                      状态：{binding.status === 'active' ? '已连接' : binding.status}
+                      {binding.expiresAt ? ` / 过期时间：${new Date(binding.expiresAt).toLocaleDateString()}` : ''}
                     </p>
                   </div>
                   <button
@@ -129,7 +129,7 @@ export default function SocialAccounts() {
                     onClick={() => void disconnect(binding.id)}
                     className="rounded bg-red-600 px-3 py-1 text-sm text-white hover:bg-red-500"
                   >
-                    Disconnect
+                    解绑
                   </button>
                 </div>
               ))}

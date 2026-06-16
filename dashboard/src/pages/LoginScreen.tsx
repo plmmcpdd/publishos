@@ -31,19 +31,19 @@ export default function LoginScreen({ onLogin }: { onLogin: () => void }) {
   return (
     <div className="min-h-screen flex items-center justify-center bg-brand-deepblue px-4">
       <div className="bg-white rounded-xl p-8 w-full max-w-sm shadow-lg">
-        <h1 className="text-2xl font-bold text-center mb-2">PublishOS Dashboard</h1>
-        <p className="text-gray-500 text-center mb-6">Admin Login</p>
+        <h1 className="text-2xl font-bold text-center mb-2">PublishOS 运营后台</h1>
+        <p className="text-gray-500 text-center mb-6">管理员登录</p>
         {error && <div className="bg-red-50 text-red-600 px-4 py-2 rounded mb-4 text-sm">{error}</div>}
         <input
           type="email"
-          placeholder="Email"
+          placeholder="邮箱"
           value={email}
           onChange={(event) => setEmail(event.target.value)}
           className="w-full border rounded-lg px-4 py-3 mb-3"
         />
         <input
           type="password"
-          placeholder="Password"
+          placeholder="密码"
           value={password}
           onChange={(event) => setPassword(event.target.value)}
           onKeyDown={(event) => {
@@ -57,7 +57,7 @@ export default function LoginScreen({ onLogin }: { onLogin: () => void }) {
           disabled={loading}
           className="w-full py-3 bg-brand-deepblue text-white rounded-lg hover:opacity-90 disabled:opacity-50"
         >
-          {loading ? 'Signing in...' : 'Sign In'}
+          {loading ? '登录中...' : '登录'}
         </button>
       </div>
     </div>

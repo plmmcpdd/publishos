@@ -56,14 +56,14 @@ export default function CustomerList() {
   };
 
   const handleResetPassword = async (id: string) => {
-    const password = prompt('New password:');
+    const password = prompt('新密码：');
     if (!password) return;
     await resetClientPassword(id, password);
-    alert('Password updated');
+    alert('密码已更新');
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Delete this client?')) return;
+    if (!confirm('确定删除该客户？')) return;
     await deleteClient(id);
     await loadClients();
   };
@@ -81,7 +81,7 @@ export default function CustomerList() {
           }}
           className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg"
         >
-          + New Client
+          + 新建客户
         </button>
       </div>
 
@@ -89,21 +89,21 @@ export default function CustomerList() {
 
       {(showCreate || editing) && (
         <div className="bg-gray-50 rounded-lg p-6 mb-6 border border-gray-200">
-          <h4 className="text-lg font-semibold mb-4">{editing ? 'Edit Client' : 'New Client'}</h4>
+          <h4 className="text-lg font-semibold mb-4">{editing ? '编辑客户' : '新建客户'}</h4>
           <div className="grid grid-cols-2 gap-4">
-            <input placeholder="Business Name" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} className="border rounded px-3 py-2" />
-            <input placeholder="Industry" value={form.industry} onChange={(event) => setForm({ ...form, industry: event.target.value })} className="border rounded px-3 py-2" />
-            <input placeholder="Email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} className="border rounded px-3 py-2" />
+            <input placeholder="公司名称" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} className="border rounded px-3 py-2" />
+            <input placeholder="行业" value={form.industry} onChange={(event) => setForm({ ...form, industry: event.target.value })} className="border rounded px-3 py-2" />
+            <input placeholder="邮箱" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} className="border rounded px-3 py-2" />
             {!editing && (
-              <input type="password" placeholder="Password" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} className="border rounded px-3 py-2" />
+              <input type="password" placeholder="密码" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} className="border rounded px-3 py-2" />
             )}
           </div>
           <div className="flex gap-3 mt-4">
             <button onClick={() => void (editing ? handleUpdate() : handleCreate())} className="px-4 py-2 bg-green-600 hover:bg-green-500 text-white rounded-lg">
-              {editing ? 'Save' : 'Create'}
+              {editing ? '保存' : '创建'}
             </button>
             <button onClick={resetForm} className="px-4 py-2 bg-gray-300 hover:bg-gray-400 rounded-lg">
-              Cancel
+              取消
             </button>
           </div>
         </div>
@@ -111,7 +111,7 @@ export default function CustomerList() {
 
       <div className="bg-white rounded-xl shadow-sm overflow-hidden">
         {loading ? (
-          <div className="px-6 py-8 text-center text-gray-500">Loading...</div>
+          <div className="px-6 py-8 text-center text-gray-500">加载中...</div>
         ) : clients.length === 0 ? (
           <div className="px-6 py-8 text-center text-gray-500">暂无客户</div>
         ) : (
@@ -121,7 +121,7 @@ export default function CustomerList() {
                 <div>
                   <h4 className="font-medium">{client.name}</h4>
                   <p className="text-sm text-gray-500">
-                    {client.email} / {client.industry || '-'} / {client.active ? 'Active' : 'Inactive'}
+                    {client.email} / {client.industry || '-'} / {client.active ? '启用' : '停用'}
                   </p>
                 </div>
                 <div className="flex gap-2">
@@ -133,13 +133,13 @@ export default function CustomerList() {
                     }}
                     className="px-3 py-1 bg-gray-200 hover:bg-gray-300 rounded text-sm"
                   >
-                    Edit
+                    编辑
                   </button>
                   <button onClick={() => void handleResetPassword(client.id)} className="px-3 py-1 bg-yellow-100 hover:bg-yellow-200 text-yellow-800 rounded text-sm">
-                    Reset Pass
+                    重置密码
                   </button>
                   <button onClick={() => void handleDelete(client.id)} className="px-3 py-1 bg-red-600 hover:bg-red-500 text-white rounded text-sm">
-                    Delete
+                    删除
                   </button>
                 </div>
               </div>
