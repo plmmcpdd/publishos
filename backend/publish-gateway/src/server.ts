@@ -16,6 +16,7 @@ import statsRoutes from './routes/stats';
 import auditLogRoutes from './routes/audit-logs';
 import tiktokRoutes from './routes/tiktok';
 import metricsRoutes from './routes/metrics';
+import ticketRoutes from './routes/tickets';
 import { languageMiddleware } from './middleware/language';
 import { collectAllMetrics } from './services/metrics-collector';
 
@@ -46,6 +47,7 @@ app.use('/v1/tasks', taskRoutes);
 app.use('/v1/audit', auditRoutes);
 app.use('/v1/stats', statsRoutes);
 app.use('/v1', metricsRoutes);
+app.use('/v1', ticketRoutes);
 app.use('/v1/audit-logs', auditLogRoutes);
 app.use('/api/v1/contents', apiContentRoutes);
 app.use('/api/v1/stats', statsRoutes);
