@@ -3,6 +3,8 @@ import type { Request, Response } from 'express';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
+import { authenticateToken, requireAdmin } from '../middleware/auth';
+import { sendInternalError } from '../middleware/errors';
 
 const router = Router();
 
@@ -28,7 +30,7 @@ const upload = multer({
   },
 });
 
-router.post('/upload/video', upload.single('video'), async (req: Request, res: Response) => {
+router.post('/upload/video', authenticateToken, requireAdmin, upload.single('video'), async (req: Request, res: Response) => {
   try {
     if (!req.file) {
       res.status(400).json({ success: false, error: 'No file uploaded' });
@@ -38,11 +40,11 @@ router.post('/upload/video', upload.single('video'), async (req: Request, res: R
     const url = `/uploads/videos/${req.file.filename}`;
     res.json({ success: true, data: { url, filename: req.file.filename, size: req.file.size } });
   } catch (error) {
-    res.status(500).json({ success: false, error: String(error) });
+    sendInternalError(req, res);
   }
 });
 
-router.post('/upload/thumbnail', upload.single('thumbnail'), async (req: Request, res: Response) => {
+router.post('/upload/thumbnail', authenticateToken, requireAdmin, upload.single('thumbnail'), async (req: Request, res: Response) => {
   try {
     if (!req.file) {
       res.status(400).json({ success: false, error: 'No file uploaded' });
@@ -52,7 +54,7 @@ router.post('/upload/thumbnail', upload.single('thumbnail'), async (req: Request
     const url = `/uploads/videos/${req.file.filename}`;
     res.json({ success: true, data: { url, filename: req.file.filename, size: req.file.size } });
   } catch (error) {
-    res.status(500).json({ success: false, error: String(error) });
+    sendInternalError(req, res);
   }
 });
 

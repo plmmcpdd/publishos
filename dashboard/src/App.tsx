@@ -13,10 +13,12 @@ import SocialAccounts from './pages/SocialAccounts';
 import Analytics from './pages/Analytics';
 
 function App() {
-  const [authed, setAuthed] = useState(false);
+  const [authed, setAuthed] = useState(() => Boolean(localStorage.getItem('adminToken')));
 
   useEffect(() => {
-    setAuthed(localStorage.getItem('dashboard_auth') === 'true');
+    const expired = () => setAuthed(false);
+    window.addEventListener('publishos-admin-session-expired', expired);
+    return () => window.removeEventListener('publishos-admin-session-expired', expired);
   }, []);
 
   if (!authed) {

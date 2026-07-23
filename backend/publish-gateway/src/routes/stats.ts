@@ -1,9 +1,10 @@
 import { Router } from 'express';
 import { prisma } from '../lib/prisma';
+import { authenticateToken, requireAdmin } from '../middleware/auth';
 
 const router = Router();
 
-router.get('/', async (_req, res) => {
+router.get('/', authenticateToken, requireAdmin, async (_req, res) => {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 

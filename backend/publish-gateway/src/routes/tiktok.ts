@@ -1,7 +1,14 @@
 import { Request, Response, Router } from 'express';
 import { prisma } from '../lib/prisma';
+import { authenticateToken, clientIdFromAuth } from '../middleware/auth';
+import { AppError, sendInternalError } from '../middleware/errors';
 
 const router = Router();
+
+function handleRouteError(error: unknown, req: Request, res: Response): void {
+  if (error instanceof AppError) throw error;
+  sendInternalError(req, res);
+}
 
 const TIKTOK_CLIENT_KEY = process.env.TIKTOK_CLIENT_KEY || '';
 const TIKTOK_CLIENT_SECRET = process.env.TIKTOK_CLIENT_SECRET || '';
@@ -212,17 +219,22 @@ async function handleTikTokAuthUrl(req: Request, res: Response, redirectUri: str
 
     res.json({ success: true, data: { authUrl: buildTikTokAuthUrl(clientId, redirectUri) } });
   } catch (error) {
-    res.status(500).json({ success: false, error: String(error) });
+    handleRouteError(error, req, res);
   }
 }
 
-router.get('/tiktok/auth', (req, res) => void handleTikTokAuthUrl(req, res, TIKTOK_REDIRECT_URI));
-router.get('/tiktok/auth-url', (req, res) => void handleTikTokAuthUrl(req, res, ELECTRON_REDIRECT_URI));
+router.get('/tiktok/auth', authenticateToken, (req, res, next) => {
+  try { clientIdFromAuth(req, req.query.clientId); void handleTikTokAuthUrl(req, res, TIKTOK_REDIRECT_URI); } catch (error) { next(error); }
+});
+router.get('/tiktok/auth-url', authenticateToken, (req, res, next) => {
+  try { clientIdFromAuth(req, req.query.clientId); void handleTikTokAuthUrl(req, res, ELECTRON_REDIRECT_URI); } catch (error) { next(error); }
+});
 
 // POST /tiktok/exchange { code, clientId } → exchanges code for tokens, saves binding
-router.post('/tiktok/exchange', async (req, res) => {
+router.post('/tiktok/exchange', authenticateToken, async (req, res) => {
   try {
     const { code, clientId } = req.body;
+    const scopedClientId = clientIdFromAuth(req, clientId);
     if (!code || !clientId) {
       res.status(400).json({ success: false, error: 'code and clientId required' });
       return;
@@ -234,7 +246,7 @@ router.post('/tiktok/exchange', async (req, res) => {
 
     const { tokenRes, tokenData } = await exchangeTikTokToken(code, ELECTRON_REDIRECT_URI);
     if (!tokenRes.ok || (tokenData.error?.code && tokenData.error.code !== 'ok')) {
-      res.status(400).json({ success: false, error: describeTikTokTokenError(tokenData) });
+      res.status(400).json({ success: false, error: 'TikTok token exchange failed' });
       return;
     }
 
@@ -254,7 +266,7 @@ router.post('/tiktok/exchange', async (req, res) => {
     const username = getTikTokDisplayName(userData, openId);
 
     await saveTikTokBinding({
-        clientId,
+        clientId: scopedClientId!,
         username,
         openId,
         accessToken,
@@ -268,7 +280,7 @@ router.post('/tiktok/exchange', async (req, res) => {
       data: { username, platform: 'tiktok', message: 'TikTok account connected' },
     });
   } catch (error) {
-    res.status(500).json({ success: false, error: String(error) });
+    handleRouteError(error, req, res);
   }
 });
 
@@ -289,7 +301,7 @@ router.get('/tiktok/callback', async (req, res) => {
     const { clientId } = decodeState(state);
     const { tokenRes, tokenData } = await exchangeTikTokToken(code, TIKTOK_REDIRECT_URI);
     if (!tokenRes.ok || (tokenData.error?.code && tokenData.error.code !== 'ok')) {
-      res.status(400).send(`Token error: ${describeTikTokTokenError(tokenData)}`);
+      res.status(400).send('TikTok token exchange failed');
       return;
     }
 
@@ -332,14 +344,15 @@ router.get('/tiktok/callback', async (req, res) => {
       </body></html>
     `);
   } catch (error) {
-    res.status(500).send(`Error: ${String(error)}`);
+    handleRouteError(error, req, res);
   }
 });
 
-router.get('/tiktok/bindings/:clientId', async (req, res) => {
+router.get('/tiktok/bindings/:clientId', authenticateToken, async (req, res) => {
   try {
+    const scopedClientId = clientIdFromAuth(req, req.params.clientId);
     const bindings = await prisma.accountBinding.findMany({
-      where: { clientId: req.params.clientId, platform: 'tiktok', active: true },
+      where: { clientId: scopedClientId!, platform: 'tiktok', active: true },
       select: {
         id: true,
         platform: true,
@@ -364,19 +377,28 @@ router.get('/tiktok/bindings/:clientId', async (req, res) => {
       })),
     });
   } catch (error) {
-    res.status(500).json({ success: false, error: String(error) });
+    handleRouteError(error, req, res);
   }
 });
 
-router.delete('/tiktok/bindings/:id', async (req, res) => {
+router.delete('/tiktok/bindings/:id', authenticateToken, async (req, res) => {
   try {
+    if (req.auth?.tokenType !== 'admin' && req.auth?.tokenType !== 'client') throw new AppError(403, 'forbidden', 'Insufficient permissions');
+    const binding = await prisma.accountBinding.findFirst({
+      where: {
+        id: String(req.params.id),
+        ...(req.auth.tokenType === 'client' ? { clientId: req.auth.clientId } : {}),
+      },
+      select: { id: true },
+    });
+    if (!binding) return res.status(404).json({ success: false, error: 'Binding not found' });
     await prisma.accountBinding.update({
-      where: { id: req.params.id },
+      where: { id: String(req.params.id) },
       data: { active: false, status: 'revoked' },
     });
     res.json({ success: true });
   } catch (error) {
-    res.status(500).json({ success: false, error: String(error) });
+    handleRouteError(error, req, res);
   }
 });
 

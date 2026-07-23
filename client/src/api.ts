@@ -137,9 +137,15 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     let message = `API ${response.status}`;
     try {
       const data = await response.json();
-      message = data.error || message;
+      message = typeof data.error === 'string' ? data.error : data.error?.message || message;
     } catch {
       // Keep the status-based message.
+    }
+    if (response.status === 401) {
+      localStorage.removeItem('token');
+      localStorage.removeItem('clientId');
+      localStorage.removeItem('clientName');
+      window.dispatchEvent(new Event('publishos-client-session-expired'));
     }
     throw new Error(message);
   }

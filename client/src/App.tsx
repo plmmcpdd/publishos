@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Routes, Route, NavLink } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import QueueScreen from './screens/QueueScreen';
@@ -20,6 +20,18 @@ function App() {
     setToken(null);
     setClientName('');
   };
+
+  useEffect(() => {
+    const expired = () => {
+      localStorage.removeItem('token');
+      localStorage.removeItem('clientId');
+      localStorage.removeItem('clientName');
+      setToken(null);
+      setClientName('');
+    };
+    window.addEventListener('publishos-client-session-expired', expired);
+    return () => window.removeEventListener('publishos-client-session-expired', expired);
+  }, []);
 
   if (!token) {
     return (

@@ -1,5 +1,7 @@
 import { Router } from 'express';
 import { prisma } from '../lib/prisma';
+import { authenticateToken, requireAdmin } from '../middleware/auth';
+import { sendInternalError } from '../middleware/errors';
 
 const router = Router();
 
@@ -12,7 +14,7 @@ function requireClientId(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
-router.get('/metrics/overview', async (req, res) => {
+router.get('/metrics/overview', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const clientId = requireClientId(req.query.clientId);
     if (!clientId) {
@@ -74,11 +76,11 @@ router.get('/metrics/overview', async (req, res) => {
       },
     });
   } catch (error) {
-    res.status(500).json({ success: false, error: String(error) });
+    sendInternalError(req, res);
   }
 });
 
-router.get('/metrics/content/:contentId', async (req, res) => {
+router.get('/metrics/content/:contentId', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const clientId = requireClientId(req.query.clientId);
     if (!clientId) {
@@ -89,18 +91,18 @@ router.get('/metrics/content/:contentId', async (req, res) => {
     const metrics = await prisma.performanceMetrics.findMany({
       where: {
         clientId,
-        contentId: req.params.contentId,
+        contentId: String(req.params.contentId),
       },
       orderBy: { collectedAt: 'desc' },
     });
 
     res.json({ success: true, data: metrics });
   } catch (error) {
-    res.status(500).json({ success: false, error: String(error) });
+    sendInternalError(req, res);
   }
 });
 
-router.get('/metrics/top', async (req, res) => {
+router.get('/metrics/top', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const clientId = requireClientId(req.query.clientId);
     if (!clientId) {
@@ -122,17 +124,17 @@ router.get('/metrics/top', async (req, res) => {
 
     res.json({ success: true, data: top });
   } catch (error) {
-    res.status(500).json({ success: false, error: String(error) });
+    sendInternalError(req, res);
   }
 });
 
-router.post('/metrics/collect', async (_req, res) => {
+router.post('/metrics/collect', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { collectAllMetrics } = await import('../services/metrics-collector');
     collectAllMetrics().catch((error) => console.error('[metrics] manual collection failed:', error));
     res.json({ success: true, message: 'Collection started' });
   } catch (error) {
-    res.status(500).json({ success: false, error: String(error) });
+    sendInternalError(req, res);
   }
 });
 

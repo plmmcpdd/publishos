@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma';
-import { authenticateUser, AuthRequest } from '../middleware/auth';
+import { authenticateToken, requireAdmin } from '../middleware/auth';
 
 const router = Router();
 
@@ -14,7 +14,7 @@ const createJobSchema = z.object({
 });
 
 // POST /publish-jobs - create a publish job for approved content
-router.post('/', authenticateUser, async (req: AuthRequest, res) => {
+router.post('/', authenticateToken, requireAdmin, async (req, res) => {
   const parse = createJobSchema.safeParse(req.body);
   if (!parse.success) {
     res.status(422).json({ error: 'Invalid request body', details: parse.error.flatten() });
@@ -52,6 +52,10 @@ router.post('/', authenticateUser, async (req: AuthRequest, res) => {
     res.status(422).json({ error: 'Account binding platform does not match requested platform' });
     return;
   }
+  if (binding.clientId !== content.clientId) {
+    res.status(422).json({ error: 'Content and account binding must belong to the same client' });
+    return;
+  }
 
   const job = await prisma.publishJob.create({
     data: {
@@ -78,7 +82,7 @@ router.post('/', authenticateUser, async (req: AuthRequest, res) => {
     data: {
       jobId: job.id,
       status: job.status,
-      changedBy: req.user!.id,
+      changedBy: req.auth!.sub,
       notes: 'Job created'
     }
   });
@@ -86,7 +90,7 @@ router.post('/', authenticateUser, async (req: AuthRequest, res) => {
   await prisma.auditLog.create({
     data: {
       action: 'create_publish_job',
-      actorId: req.user!.id,
+      actorId: req.auth!.sub,
       actorType: 'user',
       targetType: 'publish_job',
       targetId: job.id,
@@ -105,7 +109,7 @@ router.post('/', authenticateUser, async (req: AuthRequest, res) => {
 });
 
 // GET /publish-jobs - list jobs
-router.get('/', authenticateUser, async (req: AuthRequest, res) => {
+router.get('/', authenticateToken, requireAdmin, async (req, res) => {
   const { status, content_id, platform } = req.query;
   
   const jobs = await prisma.publishJob.findMany({
@@ -126,7 +130,7 @@ router.get('/', authenticateUser, async (req: AuthRequest, res) => {
 });
 
 // POST /publish-jobs/:id/cancel
-router.post('/:id/cancel', authenticateUser, async (req: AuthRequest, res) => {
+router.post('/:id/cancel', authenticateToken, requireAdmin, async (req, res) => {
   const job = await prisma.publishJob.findUnique({ where: { id: req.params.id as string } });
   
   if (!job) {
@@ -148,7 +152,7 @@ router.post('/:id/cancel', authenticateUser, async (req: AuthRequest, res) => {
     data: {
       jobId: updated.id,
       status: 'cancelled',
-      changedBy: req.user!.id,
+      changedBy: req.auth!.sub,
       notes: 'Job cancelled by user'
     }
   });

@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { prisma } from '../lib/prisma';
+import { authenticateToken, clientIdFromAuth, requireAdmin } from '../middleware/auth';
 
 const router = Router();
 
@@ -34,18 +35,19 @@ function statusFilter(status?: string) {
   return { in: [...new Set(mapped)] as any };
 }
 
-router.get('/', async (req, res) => {
+router.get('/', authenticateToken, async (req, res) => {
   const status = typeof req.query.status === 'string' ? req.query.status : undefined;
   const clientId = typeof req.query.client_id === 'string' ? req.query.client_id : undefined;
 
-  if (!clientId) {
+  const scopedClientId = clientIdFromAuth(req, clientId);
+  if (!scopedClientId) {
     res.status(400).json({ error: 'client_id is required' });
     return;
   }
 
   const contents = await prisma.content.findMany({
     where: {
-      clientId,
+      clientId: scopedClientId,
       ...(status ? { status: statusFilter(status) } : {}),
     },
     orderBy: { updatedAt: 'desc' },
@@ -55,10 +57,10 @@ router.get('/', async (req, res) => {
   res.json({ data: contents.map(serializeContent) });
 });
 
-router.post('/:id/publish', async (req, res) => {
+router.post('/:id/publish', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const content = await prisma.content.update({
-      where: { id: req.params.id },
+      where: { id: String(req.params.id) },
       data: { status: 'published' },
     });
 
@@ -78,10 +80,10 @@ router.post('/:id/publish', async (req, res) => {
   }
 });
 
-router.post('/:id/approve', async (req, res) => {
+router.post('/:id/approve', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const content = await prisma.content.update({
-      where: { id: req.params.id },
+      where: { id: String(req.params.id) },
       data: { status: 'approved' },
     });
 
@@ -101,10 +103,10 @@ router.post('/:id/approve', async (req, res) => {
   }
 });
 
-router.post('/:id/reject', async (req, res) => {
+router.post('/:id/reject', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const content = await prisma.content.update({
-      where: { id: req.params.id },
+      where: { id: String(req.params.id) },
       data: { status: 'rejected' },
     });
 

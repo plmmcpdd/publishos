@@ -1,15 +1,15 @@
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
 import { prisma } from '../lib/prisma';
-import { authenticateDevice, AuthRequest } from '../middleware/auth';
+import { issueToken } from './auth';
+import { authenticateToken, clientIdFromAuth, requireAdmin, requireClient, requireDevice } from '../middleware/auth';
+import { AppError, sendInternalError } from '../middleware/errors';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-in-production';
 const PRESIGN_EXPIRY_SECONDS = 900; // 15 minutes
 
 const router = Router();
 
-router.get('/', async (_req, res) => {
+router.get('/', authenticateToken, requireAdmin, async (_req, res) => {
   const clients = await prisma.client.findMany({
     select: { id: true, name: true, email: true, industry: true, active: true, createdAt: true, updatedAt: true },
     orderBy: { createdAt: 'desc' },
@@ -19,7 +19,7 @@ router.get('/', async (_req, res) => {
   res.json({ success: true, data: clients });
 });
 
-router.post('/', async (req, res) => {
+router.post('/', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { name, email, password, industry } = req.body;
     if (!name || !email || !password) {
@@ -41,7 +41,7 @@ router.post('/', async (req, res) => {
 
     res.json({ success: true, data: client });
   } catch (error) {
-    res.status(500).json({ success: false, error: String(error) });
+    sendInternalError(req, res);
   }
 });
 
@@ -53,7 +53,7 @@ function generatePresignedUrl(s3Key: string): string {
 }
 
 // GET /client/list - list all active clients (for client app selection)
-router.get('/list', async (_req, res) => {
+router.get('/list', authenticateToken, requireAdmin, async (_req, res) => {
   const clients = await prisma.client.findMany({
     where: { active: true },
     select: { id: true, name: true, industry: true },
@@ -63,24 +63,21 @@ router.get('/list', async (_req, res) => {
 });
 
 // POST /client/register - device registration (called by Electron app on first run)
-router.post('/register', async (req, res) => {
+router.post('/register', authenticateToken, requireClient, async (req, res) => {
   const { device_id, client_id, capabilities } = req.body;
+  const clientId = clientIdFromAuth(req, client_id)!;
   
   if (!device_id) {
     res.status(400).json({ error: 'device_id required' });
     return;
   }
 
-  const token = jwt.sign(
-    { type: 'device', device_id, client_id, capabilities },
-    JWT_SECRET,
-    { expiresIn: '7d' }
-  );
+  const token = issueToken({ tokenType: 'device', sub: device_id, deviceId: device_id, clientId, role: 'device' }, '7d');
 
   const device = await prisma.device.upsert({
     where: { deviceId: device_id },
     update: {
-      clientId: client_id,
+      clientId,
       capabilities: JSON.stringify(capabilities || []),
       token,
       online: true,
@@ -88,7 +85,7 @@ router.post('/register', async (req, res) => {
     },
     create: {
       deviceId: device_id,
-      clientId: client_id,
+      clientId,
       capabilities: JSON.stringify(capabilities || []),
       token,
       online: true,
@@ -99,9 +96,10 @@ router.post('/register', async (req, res) => {
 });
 
 // GET /client/queue - poll for pending publish jobs
-router.get('/queue', authenticateDevice, async (req: AuthRequest, res) => {
-  const deviceId = req.user!.device_id;
-  const clientId = req.user!.client_id;
+router.get('/queue', authenticateToken, requireDevice, async (req, res) => {
+  const auth = req.auth;
+  if (!auth || auth.tokenType !== 'device') throw new AppError(403, 'forbidden', 'Insufficient permissions');
+  const { deviceId, clientId } = auth;
   
   // Update heartbeat
   await prisma.device.update({
@@ -114,9 +112,10 @@ router.get('/queue', authenticateDevice, async (req: AuthRequest, res) => {
     where: {
       status: 'dispatched',
       accountBinding: {
-        clientId: clientId || undefined,
+        clientId,
         active: true,
       },
+      content: { clientId },
     },
     include: {
       content: {
@@ -131,11 +130,7 @@ router.get('/queue', authenticateDevice, async (req: AuthRequest, res) => {
   // Generate presigned URLs and task tokens
   const queue = await Promise.all(jobs.map(async (job) => {
     // Generate one-time task token for this job
-    const taskToken = jwt.sign(
-      { type: 'task', job_id: job.id, device_id: deviceId },
-      JWT_SECRET,
-      { expiresIn: '24h' }
-    );
+    const taskToken = issueToken({ tokenType: 'task', sub: job.id, jobId: job.id, deviceId, clientId, role: 'task' }, '24h');
 
     await prisma.publishJob.update({
       where: { id: job.id },
@@ -169,8 +164,10 @@ router.get('/queue', authenticateDevice, async (req: AuthRequest, res) => {
 });
 
 // POST /client/heartbeat
-router.post('/heartbeat', authenticateDevice, async (req: AuthRequest, res) => {
-  const deviceId = req.user!.device_id;
+router.post('/heartbeat', authenticateToken, requireDevice, async (req, res) => {
+  const auth = req.auth;
+  if (!auth || auth.tokenType !== 'device') throw new AppError(403, 'forbidden', 'Insufficient permissions');
+  const { deviceId } = auth;
   const { status, capabilities, active_sessions } = req.body;
   
   await prisma.device.update({
@@ -186,7 +183,7 @@ router.post('/heartbeat', authenticateDevice, async (req: AuthRequest, res) => {
 });
 
 // PUT /client/:id — update client
-router.put('/:id', async (req, res) => {
+router.put('/:id', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { name, email, industry, active } = req.body;
     const data: { name?: string; email?: string; industry?: string; active?: boolean } = {};
@@ -196,19 +193,19 @@ router.put('/:id', async (req, res) => {
     if (active !== undefined) data.active = active;
 
     const client = await prisma.client.update({
-      where: { id: req.params.id },
+      where: { id: String(req.params.id) },
       data,
       select: { id: true, name: true, email: true, industry: true, active: true, createdAt: true, updatedAt: true },
     });
 
     res.json({ success: true, data: client });
   } catch (error) {
-    res.status(500).json({ success: false, error: String(error) });
+    sendInternalError(req, res);
   }
 });
 
 // PUT /client/:id/password — reset password
-router.put('/:id/password', async (req, res) => {
+router.put('/:id/password', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { password } = req.body;
     if (!password) {
@@ -217,20 +214,20 @@ router.put('/:id/password', async (req, res) => {
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
-    await prisma.client.update({ where: { id: req.params.id }, data: { password: hashedPassword } });
+    await prisma.client.update({ where: { id: String(req.params.id) }, data: { password: hashedPassword } });
     res.json({ success: true, message: 'Password updated' });
   } catch (error) {
-    res.status(500).json({ success: false, error: String(error) });
+    sendInternalError(req, res);
   }
 });
 
 // DELETE /client/:id — delete client
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    await prisma.client.delete({ where: { id: req.params.id } });
+    await prisma.client.delete({ where: { id: String(req.params.id) } });
     res.json({ success: true });
   } catch (error) {
-    res.status(500).json({ success: false, error: String(error) });
+    sendInternalError(req, res);
   }
 });
 
