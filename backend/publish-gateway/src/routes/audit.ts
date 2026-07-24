@@ -1,11 +1,11 @@
 import { Router } from 'express';
 import { prisma } from '../lib/prisma';
-import { authenticateUser, AuthRequest } from '../middleware/auth';
+import { authenticateToken, requireAdmin } from '../middleware/auth';
 
 const router = Router();
 
 // GET /audit - query audit logs
-router.get('/', authenticateUser, async (req: AuthRequest, res) => {
+router.get('/', authenticateToken, requireAdmin, async (req, res) => {
   const { client_id, from, to, action, target_type } = req.query;
   
   const logs = await prisma.auditLog.findMany({
@@ -27,7 +27,7 @@ router.get('/', authenticateUser, async (req: AuthRequest, res) => {
 });
 
 // GET /audit/publish-summary - publish success/failure summary
-router.get('/publish-summary', authenticateUser, async (req: AuthRequest, res) => {
+router.get('/publish-summary', authenticateToken, requireAdmin, async (req, res) => {
   const { from, to } = req.query;
   
   const jobs = await prisma.publishJob.findMany({

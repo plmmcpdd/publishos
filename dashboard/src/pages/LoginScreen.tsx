@@ -2,8 +2,8 @@ import { useState } from 'react';
 import { adminLogin } from '../api';
 
 export default function LoginScreen({ onLogin }: { onLogin: () => void }) {
-  const [email, setEmail] = useState('admin@publishos.com');
-  const [password, setPassword] = useState('admin123');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -18,7 +18,6 @@ export default function LoginScreen({ onLogin }: { onLogin: () => void }) {
     try {
       const data = await adminLogin(email, password);
       localStorage.setItem('adminToken', data.token);
-      localStorage.setItem('dashboard_auth', 'true');
       localStorage.setItem('adminName', data.admin.name);
       onLogin();
     } catch (err) {

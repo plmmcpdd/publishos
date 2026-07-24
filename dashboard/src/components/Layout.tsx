@@ -18,7 +18,6 @@ export default function Layout() {
   const activeLabel = navItems.find((item) => item.path === location.pathname)?.label || '概览';
 
   const logout = () => {
-    localStorage.removeItem('dashboard_auth');
     localStorage.removeItem('adminToken');
     localStorage.removeItem('adminName');
     window.location.reload();

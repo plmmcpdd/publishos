@@ -1,15 +1,20 @@
 import { Router } from 'express';
 import { prisma } from '../lib/prisma';
-import { authenticateUser, authenticateTaskToken, AuthRequest } from '../middleware/auth';
+import { authenticateToken, requireAdmin, requireTask } from '../middleware/auth';
 
 const router = Router();
 
 // POST /tasks/:id/status - client app reports publish result
-router.post('/:id/status', authenticateTaskToken, async (req: AuthRequest, res) => {
+router.post('/:id/status', authenticateToken, requireTask, async (req, res) => {
   const { status, platform_post_id, platform_post_url, published_at, error, device_fingerprint, screenshot_url } = req.body;
   
   const jobId = req.params.id as string;
-  const tokenJobId = (req.user as any)?.job_id;
+  const auth = req.auth;
+  if (!auth || auth.tokenType !== 'task') {
+    res.status(403).json({ error: 'Task token required' });
+    return;
+  }
+  const tokenJobId = auth.jobId;
   
   // Ensure task token matches the job
   if (tokenJobId !== jobId) {
@@ -74,7 +79,7 @@ router.post('/:id/status', authenticateTaskToken, async (req: AuthRequest, res) 
 });
 
 // GET /tasks/:id - get job details (user auth)
-router.get('/:id', authenticateUser, async (req: AuthRequest, res) => {
+router.get('/:id', authenticateToken, requireAdmin, async (req, res) => {
   const job = await prisma.publishJob.findUnique({
     where: { id: req.params.id as string },
     include: {

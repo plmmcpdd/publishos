@@ -7,7 +7,8 @@
     "dev": "nodemon src/server.ts",
     "start": "node dist/server.js",
     "db:generate": "prisma generate",
-    "db:migrate": "prisma migrate dev"
+    "db:migrate": "prisma migrate dev",
+    "test": "vitest run"
   },
   "keywords": [],
   "author": "",
@@ -39,6 +40,9 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
-    "nodemon": "^3.1.14"
+    "@types/supertest": "^6.0.3",
+    "nodemon": "^3.1.14",
+    "supertest": "^7.1.4",
+    "vitest": "^3.2.4"
   }
 }

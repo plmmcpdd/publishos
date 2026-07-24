@@ -2,8 +2,21 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma';
 import { publishToTikTok } from '../services/publisher';
+import { authenticateToken, clientIdFromAuth, requireAdmin, requireClient } from '../middleware/auth';
+import { AppError, sendInternalError } from '../middleware/errors';
 
 const router = Router();
+const safeClient = { id: true, name: true, email: true, industry: true, active: true, createdAt: true, updatedAt: true } as const;
+const safeAccountBinding = {
+  id: true, clientId: true, platform: true, accountUsername: true, platformUserId: true,
+  username: true, status: true, active: true, expiresAt: true, createdAt: true, updatedAt: true,
+} as const;
+const safePublishJob = {
+  id: true, contentId: true, accountBindingId: true, platform: true, status: true, scheduleAt: true,
+  publishId: true, platformPostId: true, platformPostUrl: true, publishedAt: true, failedAt: true,
+  errorCode: true, errorMessage: true, retryable: true, retryCount: true, createdAt: true, updatedAt: true,
+  accountBinding: { select: safeAccountBinding },
+} as const;
 
 const createContentSchema = z.object({
   clientId: z.string().optional(),
@@ -109,7 +122,7 @@ async function writeAudit(data: {
   }).catch(() => {});
 }
 
-router.post('/', async (req, res) => {
+router.post('/', authenticateToken, requireAdmin, async (req, res) => {
   const parse = createContentSchema.safeParse(req.body);
   if (!parse.success) {
     res.status(422).json({ success: false, error: 'Invalid request body', details: parse.error.flatten() });
@@ -154,7 +167,7 @@ router.post('/', async (req, res) => {
         })),
       },
     },
-    include: { assets: true, client: true },
+    include: { assets: true, client: { select: safeClient } },
   });
 
   await writeAudit({
@@ -168,7 +181,7 @@ router.post('/', async (req, res) => {
   res.status(201).json({ success: true, data: serializeContent(content) });
 });
 
-router.get('/', async (req, res) => {
+router.get('/', authenticateToken, async (req, res) => {
   const status = typeof req.query.status === 'string' ? req.query.status : undefined;
   const clientId = typeof req.query.clientId === 'string'
     ? req.query.clientId
@@ -176,12 +189,13 @@ router.get('/', async (req, res) => {
       ? req.query.client_id
       : undefined;
 
+  const scopedClientId = clientIdFromAuth(req, clientId);
   const contents = await prisma.content.findMany({
     where: {
       ...(status ? { status: statusFilter(status) } : {}),
-      ...(clientId ? { clientId } : {}),
+      ...(scopedClientId ? { clientId: scopedClientId } : {}),
     },
-    include: { assets: true, client: true, publishJobs: { include: { accountBinding: true }, orderBy: { createdAt: 'desc' } } },
+    include: { assets: true, client: { select: safeClient }, publishJobs: { select: safePublishJob, orderBy: { createdAt: 'desc' } } },
     orderBy: { createdAt: 'desc' },
     take: 100,
   });
@@ -190,7 +204,7 @@ router.get('/', async (req, res) => {
 });
 
 // Must be registered before /:id.
-router.get('/delivered', async (req, res) => {
+router.get('/delivered', authenticateToken, async (req, res) => {
   try {
     const clientId = typeof req.query.clientId === 'string'
       ? req.query.clientId
@@ -198,38 +212,43 @@ router.get('/delivered', async (req, res) => {
         ? req.query.client_id
         : undefined;
 
+    const scopedClientId = clientIdFromAuth(req, clientId);
     const contents = await prisma.content.findMany({
       where: {
         status: 'delivered',
-        ...(clientId ? { clientId } : {}),
+        ...(scopedClientId ? { clientId: scopedClientId } : {}),
       },
-      include: { client: true },
+      include: { client: { select: safeClient } },
       orderBy: { createdAt: 'desc' },
     });
 
     res.json({ success: true, data: contents.map(serializeContent) });
   } catch (error) {
-    res.status(500).json({ success: false, error: String(error) });
+    if (error instanceof AppError) throw error;
+    sendInternalError(req, res);
   }
 });
 
-router.get('/:id/publish-status', async (req, res) => {
+router.get('/:id/publish-status', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const jobs = await prisma.publishJob.findMany({
-      where: { contentId: req.params.id },
-      include: { accountBinding: true },
+      where: { contentId: String(req.params.id) },
+      select: safePublishJob,
       orderBy: { createdAt: 'desc' },
     });
     res.json({ success: true, data: jobs });
   } catch (error) {
-    res.status(500).json({ success: false, error: String(error) });
+    sendInternalError(req, res);
   }
 });
 
-router.get('/:id', async (req, res) => {
-  const content = await prisma.content.findUnique({
-    where: { id: req.params.id },
-    include: { assets: true, client: true, publishJobs: { include: { accountBinding: true } } },
+router.get('/:id', authenticateToken, async (req, res) => {
+  const contentId = String(req.params.id);
+  const where = req.auth?.tokenType === 'client' ? { id: contentId, clientId: req.auth.clientId } : { id: contentId };
+  if (req.auth?.tokenType !== 'admin' && req.auth?.tokenType !== 'client') throw new AppError(403, 'forbidden', 'Insufficient permissions');
+  const content = await prisma.content.findFirst({
+    where,
+    include: { assets: true, client: { select: safeClient }, publishJobs: { select: safePublishJob } },
   });
 
   if (!content) {
@@ -240,12 +259,12 @@ router.get('/:id', async (req, res) => {
   res.json({ success: true, data: serializeContent(content) });
 });
 
-router.post('/:id/deliver', async (req, res) => {
+router.post('/:id/deliver', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const content = await prisma.content.update({
-      where: { id: req.params.id },
+      where: { id: String(req.params.id) },
       data: { status: 'delivered' },
-      include: { client: true },
+      include: { client: { select: safeClient } },
     });
 
     await writeAudit({
@@ -258,27 +277,24 @@ router.post('/:id/deliver', async (req, res) => {
 
     res.json({ success: true, data: serializeContent(content) });
   } catch (error) {
-    res.status(500).json({ success: false, error: String(error) });
+    sendInternalError(req, res);
   }
 });
 
-router.post('/:id/confirm', async (req, res) => {
+router.post('/:id/confirm', authenticateToken, requireClient, async (req, res) => {
   try {
     const { clientId, deviceId } = req.body;
-    if (!clientId) {
-      res.status(400).json({ success: false, error: 'clientId is required' });
-      return;
-    }
+    const scopedClientId = clientIdFromAuth(req, clientId)!;
 
-    const existing = await prisma.content.findUnique({ where: { id: req.params.id } });
-    if (!existing || existing.clientId !== clientId) {
-      res.status(403).json({ success: false, error: 'Not your content' });
+    const existing = await prisma.content.findFirst({ where: { id: String(req.params.id), clientId: scopedClientId } });
+    if (!existing) {
+      res.status(404).json({ success: false, error: 'Content not found' });
       return;
     }
 
     const binding = await prisma.accountBinding.findFirst({
       where: {
-        clientId,
+        clientId: scopedClientId,
         platform: 'tiktok',
         active: true,
         status: 'active',
@@ -296,9 +312,9 @@ router.post('/:id/confirm', async (req, res) => {
     }
 
     const content = await prisma.content.update({
-      where: { id: req.params.id },
+      where: { id: String(req.params.id) },
       data: { status: 'published', publishedAt: new Date() },
-      include: { client: true },
+      include: { client: { select: safeClient } },
     });
 
     const job = await prisma.publishJob.create({
@@ -319,7 +335,7 @@ router.post('/:id/confirm', async (req, res) => {
       actorType: 'client',
       targetType: 'content',
       targetId: content.id,
-      actorId: clientId,
+      actorId: scopedClientId,
       deviceId,
       details: JSON.stringify({ message: 'Published to TikTok', jobId: job.id, bindingId: binding.id }),
     });
@@ -334,15 +350,16 @@ router.post('/:id/confirm', async (req, res) => {
       },
     });
   } catch (error) {
-    res.status(500).json({ success: false, error: String(error) });
+    if (error instanceof AppError) throw error;
+    sendInternalError(req, res);
   }
 });
 
-router.post('/:id/approve', async (req, res) => {
+router.post('/:id/approve', authenticateToken, requireAdmin, async (req, res) => {
   const content = await prisma.content.update({
-    where: { id: req.params.id },
+    where: { id: String(req.params.id) },
     data: { status: 'approved' },
-    include: { assets: true, client: true },
+    include: { assets: true, client: { select: safeClient } },
   });
 
   await writeAudit({
@@ -356,12 +373,12 @@ router.post('/:id/approve', async (req, res) => {
   res.json({ success: true, data: serializeContent(content) });
 });
 
-router.post('/:id/reject', async (req, res) => {
+router.post('/:id/reject', authenticateToken, requireAdmin, async (req, res) => {
   const { reason, detail } = req.body;
   const content = await prisma.content.update({
-    where: { id: req.params.id },
+    where: { id: String(req.params.id) },
     data: { status: 'rejected' },
-    include: { client: true },
+    include: { client: { select: safeClient } },
   });
 
   await writeAudit({
@@ -375,18 +392,18 @@ router.post('/:id/reject', async (req, res) => {
   res.json({ success: true, data: serializeContent(content) });
 });
 
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    await prisma.content.delete({ where: { id: req.params.id } });
+    await prisma.content.delete({ where: { id: String(req.params.id) } });
     await writeAudit({
       action: 'delete_content',
       actorType: 'dashboard',
       targetType: 'content',
-      targetId: req.params.id,
+      targetId: String(req.params.id),
     });
     res.json({ success: true });
   } catch (error) {
-    res.status(500).json({ success: false, error: String(error) });
+    sendInternalError(req, res);
   }
 });
 

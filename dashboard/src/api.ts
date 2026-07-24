@@ -98,7 +98,7 @@ export interface TopMetric {
   };
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
   if (!(init?.body instanceof FormData) && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
@@ -115,9 +115,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     let message = `API ${response.status}`;
     try {
       const data = await response.json();
-      message = data.error || message;
+      message = typeof data.error === 'string' ? data.error : data.error?.message || message;
     } catch {
       // Keep status message.
+    }
+    if (response.status === 401) {
+      localStorage.removeItem('adminToken');
+      localStorage.removeItem('adminName');
+      window.dispatchEvent(new Event('publishos-admin-session-expired'));
     }
     throw new Error(message);
   }

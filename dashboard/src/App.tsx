@@ -15,10 +15,12 @@ import TicketList from './pages/TicketList';
 import TicketDetail from './pages/TicketDetail';
 
 function App() {
-  const [authed, setAuthed] = useState(false);
+  const [authed, setAuthed] = useState(() => Boolean(localStorage.getItem('adminToken')));
 
   useEffect(() => {
-    setAuthed(localStorage.getItem('dashboard_auth') === 'true');
+    const expired = () => setAuthed(false);
+    window.addEventListener('publishos-admin-session-expired', expired);
+    return () => window.removeEventListener('publishos-admin-session-expired', expired);
   }, []);
 
   if (!authed) {
