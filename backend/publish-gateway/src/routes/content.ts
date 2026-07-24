@@ -4,7 +4,7 @@ import { prisma } from '../lib/prisma';
 import { publishToTikTok } from '../services/publisher';
 import { authenticateToken, clientIdFromAuth, requireAdmin, requireClient } from '../middleware/auth';
 import { AppError, sendInternalError } from '../middleware/errors';
-import { createActiveJob, transitionContent } from '../domain/publishing-state';
+import { createOrGetActivePublishJob, transitionContent } from '../domain/publishing-state';
 
 const router = Router();
 const safeClient = { id: true, name: true, email: true, industry: true, active: true, createdAt: true, updatedAt: true } as const;
@@ -314,7 +314,10 @@ router.post('/:id/confirm', authenticateToken, requireClient, async (req, res) =
     }
 
     if (existing.status !== 'delivered') throw new AppError(409, 'invalid_state_transition', `Cannot transition content from ${existing.status} to publishing`);
-    const { job, created } = await prisma.$transaction((tx) => createActiveJob(tx, { contentId: existing.id, accountBindingId: binding.id, platform: 'tiktok' }));
+    const { job, created } = await prisma.$transaction((tx) => createOrGetActivePublishJob(tx, {
+      contentId: existing.id, accountBindingId: binding.id, platform: 'tiktok', dispatchWhenImmediate: false,
+      changedBy: scopedClientId, createdNotes: 'Server publishing requested by client',
+    }));
     const content = await prisma.content.findUnique({ where: { id: existing.id }, include: { client: { select: safeClient } } });
     if (!content) throw new AppError(404, 'not_found', 'Content not found');
     if (created) {

@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../lib/prisma';
 import { authenticateToken, requireAdmin } from '../middleware/auth';
 import { AppError } from '../middleware/errors';
-import { createActiveJob, transitionJob } from '../domain/publishing-state';
+import { createOrGetActivePublishJob, transitionJob } from '../domain/publishing-state';
 
 const router = Router();
 
@@ -15,7 +15,7 @@ const createJobSchema = z.object({
   publish_options: z.record(z.any()).optional(),
 });
 
-// POST /publish-jobs - create a publish job for approved content
+// POST /publish-jobs - create a publish job for delivered content
 router.post('/', authenticateToken, requireAdmin, async (req, res) => {
   const parse = createJobSchema.safeParse(req.body);
   if (!parse.success) {
@@ -25,7 +25,7 @@ router.post('/', authenticateToken, requireAdmin, async (req, res) => {
 
   const data = parse.data;
 
-  // Validate content is approved
+  // A publication task may only be created after the separate delivery action.
   const content = await prisma.content.findUnique({
     where: { id: data.content_id }
   });
@@ -35,7 +35,7 @@ router.post('/', authenticateToken, requireAdmin, async (req, res) => {
     return;
   }
   
-  if (content.status !== 'approved' && content.status !== 'delivered') throw new AppError(409, 'invalid_state_transition', 'Content must be approved or delivered before creating publish jobs');
+  if (content.status !== 'delivered') throw new AppError(409, 'invalid_state_transition', 'Content must be delivered before creating publish jobs');
 
   // Validate account binding
   const binding = await prisma.accountBinding.findUnique({
@@ -56,16 +56,12 @@ router.post('/', authenticateToken, requireAdmin, async (req, res) => {
     return;
   }
 
-  const { job, created } = await prisma.$transaction((tx) => createActiveJob(tx, { contentId: data.content_id, accountBindingId: data.account_binding_id, platform: data.platform, scheduleAt: data.schedule_at ? new Date(data.schedule_at) : null, publishOptions: JSON.stringify(data.publish_options || {}) }));
-
-  if (created) await prisma.jobHistory.create({
-    data: {
-      jobId: job.id,
-      status: job.status,
-      changedBy: req.auth!.sub,
-      notes: 'Job created'
-    }
-  });
+  const scheduleAt = data.schedule_at ? new Date(data.schedule_at) : null;
+  const { job, created } = await prisma.$transaction((tx) => createOrGetActivePublishJob(tx, {
+    contentId: data.content_id, accountBindingId: data.account_binding_id, platform: data.platform, scheduleAt,
+    publishOptions: JSON.stringify(data.publish_options || {}), dispatchWhenImmediate: true,
+    changedBy: req.auth!.sub,
+  }));
 
   if (created) await prisma.auditLog.create({
     data: {

@@ -2,7 +2,8 @@ import { Router } from 'express';
 import { prisma } from '../lib/prisma';
 import { authenticateToken, clientIdFromAuth, requireAdmin } from '../middleware/auth';
 import { AppError } from '../middleware/errors';
-import { transitionContent } from '../domain/publishing-state';
+import { createOrGetActivePublishJob, transitionContent } from '../domain/publishing-state';
+import { publishToTikTok } from '../services/publisher';
 
 const router = Router();
 
@@ -62,21 +63,30 @@ router.get('/', authenticateToken, async (req, res) => {
 router.post('/:id/publish', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const id = String(req.params.id);
-    await prisma.$transaction((tx) => transitionContent(tx, id, 'delivered', 'published', { publishedAt: new Date() }));
     const content = await prisma.content.findUnique({ where: { id } });
     if (!content) throw new AppError(404, 'not_found', 'Content not found');
-
-    await prisma.auditLog.create({
-      data: {
-        action: 'publish',
-        actorId: 'dashboard',
-        actorType: 'user',
-        targetType: 'content',
-        targetId: content.id,
-      },
+    if (content.status !== 'delivered') throw new AppError(409, 'invalid_state_transition', `Cannot publish content from ${content.status}`);
+    const binding = await prisma.accountBinding.findFirst({
+      where: { clientId: content.clientId, platform: 'tiktok', active: true, status: 'active', accessToken: { not: null } },
+      orderBy: { updatedAt: 'desc' },
     });
+    if (!binding) throw new AppError(409, 'invalid_state_transition', 'Content requires an active TikTok account binding');
+    const { job, created } = await prisma.$transaction((tx) => createOrGetActivePublishJob(tx, {
+      contentId: content.id, accountBindingId: binding.id, platform: 'tiktok', dispatchWhenImmediate: false,
+      changedBy: req.auth!.sub, createdNotes: 'Server publishing requested by legacy API',
+    }));
 
-    res.json({ data: serializeContent(content) });
+    if (created) {
+      await prisma.auditLog.create({
+        data: {
+          action: 'publish_requested', actorId: req.auth!.sub, actorType: 'user', targetType: 'content', targetId: content.id,
+          details: JSON.stringify({ jobId: job.id, bindingId: binding.id, source: 'legacy' }),
+        },
+      });
+      publishToTikTok(job.id).catch((error) => console.error(`TikTok publish job ${job.id} failed`, error));
+    }
+
+    res.json({ data: { ...serializeContent(content), publishJobId: job.id, publishing: true, idempotent: !created } });
   } catch (error) {
     if (error instanceof AppError) throw error;
     throw error;

@@ -192,6 +192,71 @@ describe('Ticket routes require admin authentication', () => {
 });
 
 describe('Phase 1B state machines and task replay protection', () => {
+  it('routes legacy publish through one idempotent server publish job without publishing content early', async () => {
+    publisherMock.publishToTikTok.mockClear();
+    const content = await prisma.content.create({ data: { clientId: clientAId, title: 'Legacy publish', description: 'test', videoUrl: 'mock/legacy.mp4', platforms: '["tiktok"]', status: 'delivered' } });
+    const first = await request(app).post(`/api/v1/contents/${content.id}/publish`).set('Authorization', `Bearer ${adminToken}`);
+    expect(first.status).toBe(200);
+    expect(first.headers.deprecation).toBe('true');
+    expect(first.body.data).toMatchObject({ publishing: true, idempotent: false, publishJobId: expect.any(String) });
+    const jobId = first.body.data.publishJobId as string;
+    expect((await prisma.content.findUniqueOrThrow({ where: { id: content.id } })).status).toBe('delivered');
+    expect(await prisma.publishJob.count({ where: { contentId: content.id, activeKey: `${content.id}:tiktok` } })).toBe(1);
+    expect(publisherMock.publishToTikTok).toHaveBeenCalledTimes(1);
+    expect(publisherMock.publishToTikTok).toHaveBeenCalledWith(jobId);
+
+    const second = await request(app).post(`/api/v1/contents/${content.id}/publish`).set('Authorization', `Bearer ${adminToken}`);
+    expect(second.status).toBe(200);
+    expect(second.headers.deprecation).toBe('true');
+    expect(second.body.data).toMatchObject({ publishing: true, idempotent: true, publishJobId: jobId });
+    expect(publisherMock.publishToTikTok).toHaveBeenCalledTimes(1);
+    expect(await prisma.jobHistory.count({ where: { jobId } })).toBe(1);
+    expect(await prisma.auditLog.count({ where: { action: 'publish_requested', targetId: content.id } })).toBe(1);
+  });
+
+  it('creates only delivered admin jobs, dispatches immediate work, and keeps duplicate creation idempotent', async () => {
+    const binding = await prisma.accountBinding.findFirstOrThrow({ where: { clientId: clientAId } });
+    const approved = await prisma.content.create({ data: { clientId: clientAId, title: 'Approved admin job', description: 'test', videoUrl: 'mock/approved-job.mp4', platforms: '["tiktok"]', status: 'approved' } });
+    const rejected = await request(app).post('/v1/publish-jobs').set('Authorization', `Bearer ${adminToken}`).send({ content_id: approved.id, account_binding_id: binding.id, platform: 'tiktok' });
+    expect(rejected.status).toBe(409);
+    expect(rejected.body.error).toMatchObject({ code: 'invalid_state_transition', requestId: expect.any(String) });
+
+    const content = await prisma.content.create({ data: { clientId: clientAId, title: 'Immediate admin job', description: 'test', videoUrl: 'mock/immediate-job.mp4', platforms: '["tiktok"]', status: 'delivered' } });
+    const body = { content_id: content.id, account_binding_id: binding.id, platform: 'tiktok' };
+    const first = await request(app).post('/v1/publish-jobs').set('Authorization', `Bearer ${adminToken}`).send(body);
+    expect(first.status).toBe(201);
+    expect(first.body).toMatchObject({ status: 'dispatched', idempotent: false });
+    const jobId = first.body.job_id as string;
+    expect(await prisma.jobHistory.count({ where: { jobId } })).toBe(1);
+    expect(await prisma.auditLog.count({ where: { action: 'create_publish_job', targetId: jobId } })).toBe(1);
+
+    const second = await request(app).post('/v1/publish-jobs').set('Authorization', `Bearer ${adminToken}`).send(body);
+    expect(second.status).toBe(200);
+    expect(second.body).toMatchObject({ job_id: jobId, status: 'dispatched', idempotent: true });
+    expect(await prisma.publishJob.count({ where: { contentId: content.id, activeKey: `${content.id}:tiktok` } })).toBe(1);
+    expect(await prisma.jobHistory.count({ where: { jobId } })).toBe(1);
+    expect(await prisma.auditLog.count({ where: { action: 'create_publish_job', targetId: jobId } })).toBe(1);
+
+    const device = await request(app).post('/v1/client/register').set('Authorization', `Bearer ${clientAToken}`).send({ device_id: 'admin-dispatched-device' });
+    const queue = await request(app).get('/v1/client/queue').set('Authorization', `Bearer ${device.body.device_token}`);
+    const queued = queue.body.queue.find((item: { job_id: string }) => item.job_id === jobId);
+    expect(queued).toBeDefined();
+    expect((await prisma.publishJob.findUniqueOrThrow({ where: { id: jobId } })).status).toBe('client_confirmed');
+    expect((await request(app).post(`/v1/tasks/${jobId}/status`).set('Authorization', `Bearer ${queued.job_token}`).send({ status: 'published' })).status).toBe(200);
+    expect((await prisma.publishJob.findUniqueOrThrow({ where: { id: jobId } })).status).toBe('published');
+    expect((await prisma.content.findUniqueOrThrow({ where: { id: content.id } })).status).toBe('published');
+  });
+
+  it('keeps future administrator publish jobs pending', async () => {
+    const binding = await prisma.accountBinding.findFirstOrThrow({ where: { clientId: clientAId } });
+    const content = await prisma.content.create({ data: { clientId: clientAId, title: 'Future admin job', description: 'test', videoUrl: 'mock/future-job.mp4', platforms: '["tiktok"]', status: 'delivered' } });
+    const scheduledAt = new Date(Date.now() + 6 * 60_000).toISOString();
+    const result = await request(app).post('/v1/publish-jobs').set('Authorization', `Bearer ${adminToken}`).send({ content_id: content.id, account_binding_id: binding.id, platform: 'tiktok', schedule_at: scheduledAt });
+    expect(result.status).toBe(201);
+    expect(result.body).toMatchObject({ status: 'pending', idempotent: false });
+    expect(await prisma.jobHistory.count({ where: { jobId: result.body.job_id, status: 'pending' } })).toBe(1);
+  });
+
   it('enforces content lifecycle transitions and rejects terminal creation', async () => {
     const forbidden = await request(app).post('/v1/content').set('Authorization', `Bearer ${adminToken}`).send({
       clientId: clientAId, title: 'Invalid terminal', description: 'test', videoUrl: 'mock/invalid.mp4', platforms: ['tiktok'], status: 'published',

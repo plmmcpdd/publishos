@@ -47,7 +47,15 @@ export async function createActiveJob(tx: Prisma.TransactionClient, input: { con
   const existing = await tx.publishJob.findUnique({ where: { activeKey } });
   if (existing) return { job: existing, created: false };
   try {
-    const job = await tx.publishJob.create({ data: { ...input, status: 'pending', activeKey } });
+    const job = await tx.publishJob.create({ data: {
+      contentId: input.contentId,
+      accountBindingId: input.accountBindingId,
+      platform: input.platform,
+      scheduleAt: input.scheduleAt,
+      publishOptions: input.publishOptions,
+      status: 'pending',
+      activeKey,
+    } });
     return { job, created: true };
   } catch (error: any) {
     if (error?.code !== 'P2002') throw error;
@@ -55,4 +63,38 @@ export async function createActiveJob(tx: Prisma.TransactionClient, input: { con
     if (!job) throw error;
     return { job, created: false };
   }
+}
+
+export function isImmediatePublishSchedule(scheduleAt?: Date | null, now = new Date()): boolean {
+  return !scheduleAt || scheduleAt.getTime() < now.getTime() + 5 * 60_000;
+}
+
+export async function createOrGetActivePublishJob(tx: Prisma.TransactionClient, input: {
+  contentId: string;
+  accountBindingId: string;
+  platform: string;
+  scheduleAt?: Date | null;
+  publishOptions?: string | null;
+  dispatchWhenImmediate: boolean;
+  changedBy?: string;
+  createdNotes?: string;
+}) {
+  const result = await createActiveJob(tx, input);
+  if (!result.created) return result;
+
+  let job = result.job;
+  if (input.dispatchWhenImmediate && isImmediatePublishSchedule(input.scheduleAt)) {
+    await transitionJob(tx, job.id, 'pending', 'dispatched');
+    job = await tx.publishJob.findUniqueOrThrow({ where: { id: job.id } });
+  }
+
+  await tx.jobHistory.create({
+    data: {
+      jobId: job.id,
+      status: job.status,
+      changedBy: input.changedBy,
+      notes: input.createdNotes || (job.status === 'dispatched' ? 'Job dispatched for immediate device publishing' : 'Job created'),
+    },
+  });
+  return { job, created: true };
 }
