@@ -93,7 +93,7 @@ export default function ContentList() {
     if (!file) return;
     try {
       const uploaded = await uploadVideo(file);
-      setNewContent((value) => ({ ...value, videoUrl: uploaded.url }));
+      setNewContent((value) => ({ ...value, videoUrl: uploaded.storage_key }));
     } catch (err) {
       setError(err instanceof Error ? err.message : '上传失败');
     }

@@ -183,3 +183,7 @@ This is a **reference scaffold**, not production code. External teams need to ad
 ## Contact
 
 This reference implementation was produced by the internal product team as a handoff package for external development. Questions about the architecture should go to the PM; questions about the API contract should reference `api-contract-v0.1.md`.
+
+## Phase 1C security configuration
+
+Set `MEDIA_SIGNING_SECRET` (at least 32 bytes), `PUBLIC_BASE_URL`, and an exact comma-separated `CORS_ALLOWED_ORIGINS` list for browser deployments. `MEDIA_URL_TTL_SECONDS` defaults to 900. `TRUST_PROXY_HOPS` defaults to 0; set it only when the deployment has that many trusted reverse-proxy hops. Uploaded files are private and are served only by signed `/v1/media` URLs.

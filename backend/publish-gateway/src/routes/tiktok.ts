@@ -1,405 +1,75 @@
+import crypto from 'crypto';
 import { Request, Response, Router } from 'express';
 import { prisma } from '../lib/prisma';
 import { authenticateToken, clientIdFromAuth } from '../middleware/auth';
-import { AppError, sendInternalError } from '../middleware/errors';
+import { AppError } from '../middleware/errors';
+import { consumeOAuthState, createOAuthState, type OAuthFlow } from '../services/oauth-state';
+import { rateLimit } from '../middleware/http-security';
 
 const router = Router();
-
-function handleRouteError(error: unknown, req: Request, res: Response): void {
-  if (error instanceof AppError) throw error;
-  sendInternalError(req, res);
-}
-
-const TIKTOK_CLIENT_KEY = process.env.TIKTOK_CLIENT_KEY || '';
-const TIKTOK_CLIENT_SECRET = process.env.TIKTOK_CLIENT_SECRET || '';
-const TIKTOK_REDIRECT_URI = process.env.TIKTOK_REDIRECT_URI || 'https://reaching-combines-bass-propose.trycloudflare.com/v1/tiktok/callback';
-// For Electron: custom protocol redirect
-const ELECTRON_REDIRECT_URI = 'publishos://tiktok-callback';
 const TIKTOK_TOKEN_ENDPOINT = 'https://open.tiktokapis.com/v2/oauth/token/';
-
-type TikTokTokenPayload = Record<string, any>;
-
-function encodeState(clientId: string): string {
-  return Buffer.from(JSON.stringify({ clientId, ts: Date.now() })).toString('base64url');
+const ELECTRON_REDIRECT_URI = 'publishos://tiktok-callback';
+function browserRedirectUri(): string { return process.env.TIKTOK_REDIRECT_URI || (process.env.NODE_ENV === 'test' ? 'http://localhost:3000/v1/tiktok/callback' : ''); }
+function credentials(): { key: string; secret: string } { const key = process.env.TIKTOK_CLIENT_KEY || ''; const secret = process.env.TIKTOK_CLIENT_SECRET || ''; if (!key || !secret) throw new AppError(500, 'oauth_not_configured', 'TikTok OAuth is not configured'); return { key, secret }; }
+function escapeHtml(value: string): string { return value.replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character]!)); }
+function callbackSecurityHeaders(res: Response): string {
+  const nonce = crypto.randomBytes(18).toString('base64url');
+  res.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'; img-src 'none'; connect-src 'none'; font-src 'none'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'`);
+  res.setHeader('X-Content-Type-Options', 'nosniff'); res.setHeader('Referrer-Policy', 'no-referrer');
+  return nonce;
 }
+function timeoutSignal(ms = 10_000): AbortSignal { return AbortSignal.timeout(ms); }
 
-function decodeState(state: string): { clientId: string; ts?: number } {
-  return JSON.parse(Buffer.from(state, 'base64url').toString('utf8'));
+function authUrl(state: string, redirectUri: string): string {
+  const { key } = credentials(); const url = new URL('https://www.tiktok.com/v2/auth/authorize/');
+  url.searchParams.set('client_key', key); url.searchParams.set('response_type', 'code'); url.searchParams.set('scope', 'user.info.basic,video.upload'); url.searchParams.set('redirect_uri', redirectUri); url.searchParams.set('state', state); return url.toString();
 }
-
-function redactTikTokTokenBody(value: any): any {
-  if (Array.isArray(value)) return value.map(redactTikTokTokenBody);
-  if (!value || typeof value !== 'object') return value;
-
-  return Object.fromEntries(Object.entries(value).map(([key, entry]) => {
-    if (/token|secret/i.test(key)) return [key, entry ? '[redacted]' : entry];
-    return [key, redactTikTokTokenBody(entry)];
-  }));
+async function exchange(code: string, redirectUri: string) {
+  const { key, secret } = credentials();
+  let response: globalThis.Response;
+  try { response = await fetch(TIKTOK_TOKEN_ENDPOINT, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ client_key: key, client_secret: secret, code, grant_type: 'authorization_code', redirect_uri: redirectUri }), signal: timeoutSignal() }); }
+  catch { throw new AppError(502, 'oauth_exchange_failed', 'TikTok token exchange failed'); }
+  const text = await response.text(); let data: any = {};
+  try { data = text ? JSON.parse(text) : {}; } catch { throw new AppError(502, 'oauth_exchange_failed', 'TikTok token exchange failed'); }
+  if (!response.ok || (data.error?.code && data.error.code !== 'ok')) throw new AppError(502, 'oauth_exchange_failed', 'TikTok token exchange failed');
+  const token = data.data?.access_token ?? data.access_token; const openId = data.data?.open_id ?? data.open_id; const expiresIn = Number(data.data?.expires_in ?? data.expires_in); const refreshToken = data.data?.refresh_token ?? data.refresh_token; const scope = data.data?.scope ?? data.scope;
+  if (!token || !openId || !Number.isFinite(expiresIn) || expiresIn <= 0) throw new AppError(502, 'oauth_exchange_failed', 'TikTok token exchange failed');
+  return { token, openId, expiresIn, refreshToken, scope };
 }
-
-function getTikTokTokenValue(tokenData: TikTokTokenPayload, field: string) {
-  return tokenData?.data?.[field] ?? tokenData?.[field];
+async function profile(accessToken: string, openId: string): Promise<string> {
+  try { const response = await fetch('https://open.tiktokapis.com/v2/user/info/?fields=open_id,display_name', { headers: { Authorization: `Bearer ${accessToken}` }, signal: timeoutSignal() }); const data: any = await response.json(); const name = data?.data?.user?.display_name || data?.user?.display_name; return typeof name === 'string' && name.trim() ? name.trim() : `TikTok User ${openId.slice(-8)}`; }
+  catch { return `TikTok User ${openId.slice(-8)}`; }
 }
-
-function describeTikTokTokenError(tokenData: TikTokTokenPayload, fallback = 'Token exchange failed') {
-  const error = tokenData?.error;
-  const parts = [
-    typeof error === 'string' ? error : undefined,
-    error?.code,
-    error?.message,
-    tokenData?.error_description,
-    tokenData?.message,
-    tokenData?.log_id ? `log_id=${tokenData.log_id}` : undefined,
-    error?.log_id ? `log_id=${error.log_id}` : undefined,
-  ].filter(Boolean);
-
-  return parts.length ? parts.join(' | ') : fallback;
-}
-
-async function exchangeTikTokToken(code: string, redirectUri: string) {
-  const tokenRes = await fetch(TIKTOK_TOKEN_ENDPOINT, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      client_key: TIKTOK_CLIENT_KEY,
-      client_secret: TIKTOK_CLIENT_SECRET,
-      code,
-      grant_type: 'authorization_code',
-      redirect_uri: redirectUri,
-    }),
-  });
-
-  const rawBody = await tokenRes.text();
-  let tokenData: TikTokTokenPayload;
-  try {
-    tokenData = rawBody ? JSON.parse(rawBody) : {};
-  } catch {
-    tokenData = { message: rawBody || 'Non-JSON response from TikTok token endpoint' };
-  }
-
-  console.log('TikTok token exchange response', {
-    status: tokenRes.status,
-    ok: tokenRes.ok,
-    redirectUri,
-    body: redactTikTokTokenBody(tokenData),
-  });
-
-  return { tokenRes, tokenData };
-}
-
-function readTikTokTokenFields(tokenData: TikTokTokenPayload) {
-  const accessToken = getTikTokTokenValue(tokenData, 'access_token');
-  const refreshToken = getTikTokTokenValue(tokenData, 'refresh_token');
-  const openId = getTikTokTokenValue(tokenData, 'open_id');
-  const expiresIn = getTikTokTokenValue(tokenData, 'expires_in');
-  const scope = getTikTokTokenValue(tokenData, 'scope');
-
-  return { accessToken, refreshToken, openId, expiresIn, scope };
-}
-
-function missingTikTokTokenFields(fields: ReturnType<typeof readTikTokTokenFields>) {
-  return [
-    ['access_token', fields.accessToken],
-    ['open_id', fields.openId],
-    ['expires_in', fields.expiresIn],
-  ].filter(([, value]) => !value).map(([field]) => field);
-}
-
-function shortOpenId(openId?: string | null) {
-  return openId ? openId.slice(-8) : '';
-}
-
-function fallbackTikTokName(openId?: string | null) {
-  const suffix = shortOpenId(openId);
-  return suffix ? `TikTok User ${suffix}` : 'TikTok Account';
-}
-
-function normalizeTikTokName(value?: string | null) {
-  if (!value || value.trim().toLowerCase() === 'unknown') return null;
-  return value.trim();
-}
-
-function getTikTokDisplayName(userData: any, openId?: string | null) {
-  const user = userData?.data?.user || userData?.user || {};
-  return normalizeTikTokName(user.display_name)
-    || normalizeTikTokName(user.username)
-    || normalizeTikTokName(user.open_id)
-    || fallbackTikTokName(openId);
-}
-
-function presentTikTokBindingName(binding: {
-  username?: string | null;
-  accountUsername?: string | null;
-  platformUserId?: string | null;
-}) {
-  return normalizeTikTokName(binding.username)
-    || normalizeTikTokName(binding.accountUsername)
-    || fallbackTikTokName(binding.platformUserId);
-}
-
-async function saveTikTokBinding(input: {
-  clientId: string;
-  username: string;
-  openId: string;
-  accessToken: string;
-  refreshToken?: string | null;
-  expiresIn: number;
-  scope?: string | null;
-}) {
-  const existingBinding = await prisma.accountBinding.findFirst({
-    where: {
-      clientId: input.clientId,
-      platform: 'tiktok',
-      platformUserId: input.openId,
-    },
-  });
-
-  const data = {
-    accountUsername: input.username,
-    platformUserId: input.openId,
-    username: input.username,
-    accessToken: input.accessToken,
-    refreshToken: input.refreshToken || null,
-    expiresAt: new Date(Date.now() + input.expiresIn * 1000),
-    scope: input.scope || null,
-    status: 'active',
-    active: true,
-  };
-
-  if (existingBinding) {
-    await prisma.accountBinding.update({
-      where: { id: existingBinding.id },
-      data,
-    });
-    return;
-  }
-
-  await prisma.accountBinding.upsert({
-    where: {
-      clientId_platform_accountUsername: {
-        clientId: input.clientId,
-        platform: 'tiktok',
-        accountUsername: input.username,
-      },
-    },
-    update: data,
-    create: {
-      clientId: input.clientId,
-      platform: 'tiktok',
-      ...data,
-    },
+async function saveBinding(input: { clientId: string; username: string; openId: string; token: string; refreshToken?: string; expiresIn: number; scope?: string }) {
+  await prisma.$transaction(async (tx) => {
+    const data = { accountUsername: input.username, username: input.username, platformUserId: input.openId, accessToken: input.token, refreshToken: input.refreshToken || null, expiresAt: new Date(Date.now() + input.expiresIn * 1000), scope: input.scope || null, status: 'active', active: true };
+    await tx.accountBinding.upsert({ where: { clientId_platform_accountUsername: { clientId: input.clientId, platform: 'tiktok', accountUsername: input.username } }, update: data, create: { clientId: input.clientId, platform: 'tiktok', ...data } });
+    await tx.auditLog.create({ data: { action: 'oauth_binding_created', actorType: 'oauth', targetType: 'client', targetId: input.clientId, details: JSON.stringify({ provider: 'tiktok' }) } });
   });
 }
-
-// ---- Electron OAuth endpoints ----
-
-// GET /tiktok/auth-url?clientId=xxx → returns TikTok auth URL for Electron
-function buildTikTokAuthUrl(clientId: string, redirectUri: string) {
-  const scopes = ['user.info.basic', 'video.upload'];
-  const authUrl = new URL('https://www.tiktok.com/v2/auth/authorize/');
-  authUrl.searchParams.set('client_key', TIKTOK_CLIENT_KEY);
-  authUrl.searchParams.set('response_type', 'code');
-  authUrl.searchParams.set('scope', scopes.join(','));
-  authUrl.searchParams.set('redirect_uri', redirectUri);
-  authUrl.searchParams.set('state', encodeState(clientId));
-  return authUrl.toString();
+async function start(req: Request, res: Response, flow: OAuthFlow) {
+  const supplied = typeof req.query.clientId === 'string' ? req.query.clientId : undefined; const clientId = clientIdFromAuth(req, supplied);
+  if (!clientId) throw new AppError(400, 'validation_error', 'clientId is required');
+  const redirectUri = flow === 'electron' ? ELECTRON_REDIRECT_URI : browserRedirectUri(); if (!redirectUri) throw new AppError(503, 'oauth_not_configured', 'TikTok OAuth is not configured');
+  const state = await createOAuthState({ clientId, flow, redirectUri, actorId: req.auth?.sub });
+  res.json({ success: true, data: { authUrl: authUrl(state, redirectUri), expires_at: new Date(Date.now() + 600_000).toISOString() } });
 }
+router.get('/tiktok/auth', authenticateToken, rateLimit('oauth_browser_start', 30, 10 * 60_000), (req, res, next) => { void start(req, res, 'browser').catch(next); });
+router.get('/tiktok/auth-url', authenticateToken, rateLimit('oauth_electron_start', 30, 10 * 60_000), (req, res, next) => { void start(req, res, 'electron').catch(next); });
 
-async function handleTikTokAuthUrl(req: Request, res: Response, redirectUri: string) {
-  try {
-    const clientId = typeof req.query.clientId === 'string' ? req.query.clientId : '';
-    if (!clientId) {
-      res.status(400).json({ success: false, error: 'clientId required' });
-      return;
-    }
-    if (!TIKTOK_CLIENT_KEY) {
-      res.status(500).json({ success: false, error: 'TIKTOK_CLIENT_KEY is not configured' });
-      return;
-    }
-
-    res.json({ success: true, data: { authUrl: buildTikTokAuthUrl(clientId, redirectUri) } });
-  } catch (error) {
-    handleRouteError(error, req, res);
-  }
-}
-
-router.get('/tiktok/auth', authenticateToken, (req, res, next) => {
-  try { clientIdFromAuth(req, req.query.clientId); void handleTikTokAuthUrl(req, res, TIKTOK_REDIRECT_URI); } catch (error) { next(error); }
+router.post('/tiktok/exchange', authenticateToken, rateLimit('oauth_electron_exchange', 30, 10 * 60_000), async (req, res, next) => {
+  try { const scoped = clientIdFromAuth(req, req.body?.clientId); credentials(); const code = typeof req.body?.code === 'string' ? req.body.code : ''; const state = typeof req.body?.state === 'string' ? req.body.state : ''; if (!code || !state) throw new AppError(400, 'validation_error', 'code and state are required');
+    if (!scoped) throw new AppError(403, 'tenant_mismatch', 'Tenant does not match token');
+    const consumed = await consumeOAuthState({ state, flow: 'electron', redirectUri: ELECTRON_REDIRECT_URI, expectedClientId: scoped });
+    const tokens = await exchange(code, ELECTRON_REDIRECT_URI); const username = await profile(tokens.token, tokens.openId); await saveBinding({ clientId: consumed.clientId, username, openId: tokens.openId, token: tokens.token, refreshToken: tokens.refreshToken, expiresIn: tokens.expiresIn, scope: tokens.scope }); res.json({ success: true, data: { username, platform: 'tiktok', message: 'TikTok account connected' } });
+  } catch (error) { next(error); }
 });
-router.get('/tiktok/auth-url', authenticateToken, (req, res, next) => {
-  try { clientIdFromAuth(req, req.query.clientId); void handleTikTokAuthUrl(req, res, ELECTRON_REDIRECT_URI); } catch (error) { next(error); }
+router.get('/tiktok/callback', rateLimit('oauth_browser_callback', 30, 10 * 60_000), async (req, res, next) => {
+  try { const error = typeof req.query.error === 'string' ? req.query.error : ''; const code = typeof req.query.code === 'string' ? req.query.code : ''; const state = typeof req.query.state === 'string' ? req.query.state : ''; if (error) { const nonce = callbackSecurityHeaders(res); res.status(400).type('html').send(`<html><body><h1>TikTok connection was not completed</h1><p>${escapeHtml(typeof req.query.error_description === 'string' ? req.query.error_description : 'Please return to PublishOS and try again.')}</p><script nonce="${escapeHtml(nonce)}">setTimeout(function(){window.close()},3000)</script></body></html>`); return; } if (!code || !state) throw new AppError(400, 'oauth_state_invalid', 'OAuth callback is invalid');
+    const redirectUri = browserRedirectUri(); if (!redirectUri) throw new AppError(503, 'oauth_not_configured', 'TikTok OAuth is not configured'); const consumed = await consumeOAuthState({ state, flow: 'browser', redirectUri }); const tokens = await exchange(code, redirectUri); const username = await profile(tokens.token, tokens.openId); await saveBinding({ clientId: consumed.clientId, username, openId: tokens.openId, token: tokens.token, refreshToken: tokens.refreshToken, expiresIn: tokens.expiresIn, scope: tokens.scope });
+    const nonce = callbackSecurityHeaders(res); res.type('html').send(`<html><body style="font-family:sans-serif;text-align:center;padding:50px"><h1>TikTok Connected!</h1><p>Account: @${escapeHtml(username)}</p><p>You can close this window and return to PublishOS.</p><script nonce="${escapeHtml(nonce)}">setTimeout(function(){window.close()},3000)</script></body></html>`);
+  } catch (error) { next(error); }
 });
-
-// POST /tiktok/exchange { code, clientId } → exchanges code for tokens, saves binding
-router.post('/tiktok/exchange', authenticateToken, async (req, res) => {
-  try {
-    const { code, clientId } = req.body;
-    const scopedClientId = clientIdFromAuth(req, clientId);
-    if (!code || !clientId) {
-      res.status(400).json({ success: false, error: 'code and clientId required' });
-      return;
-    }
-    if (!TIKTOK_CLIENT_KEY || !TIKTOK_CLIENT_SECRET) {
-      res.status(500).json({ success: false, error: 'TikTok credentials not configured' });
-      return;
-    }
-
-    const { tokenRes, tokenData } = await exchangeTikTokToken(code, ELECTRON_REDIRECT_URI);
-    if (!tokenRes.ok || (tokenData.error?.code && tokenData.error.code !== 'ok')) {
-      res.status(400).json({ success: false, error: 'TikTok token exchange failed' });
-      return;
-    }
-
-    const tokenFields = readTikTokTokenFields(tokenData);
-    const missingFields = missingTikTokTokenFields(tokenFields);
-    if (missingFields.length) {
-      res.status(400).json({ success: false, error: `Missing token fields: ${missingFields.join(', ')}` });
-      return;
-    }
-    const { accessToken, refreshToken, openId, expiresIn, scope } = tokenFields;
-
-    // Get user info
-    const userRes = await fetch('https://open.tiktokapis.com/v2/user/info/?fields=open_id,union_id,avatar_url,display_name', {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
-    const userData: any = await userRes.json();
-    const username = getTikTokDisplayName(userData, openId);
-
-    await saveTikTokBinding({
-        clientId: scopedClientId!,
-        username,
-        openId,
-        accessToken,
-        refreshToken,
-        expiresIn,
-        scope,
-    });
-
-    res.json({
-      success: true,
-      data: { username, platform: 'tiktok', message: 'TikTok account connected' },
-    });
-  } catch (error) {
-    handleRouteError(error, req, res);
-  }
-});
-
-// Browser callback route (TikTok redirects here after auth)
-router.get('/tiktok/callback', async (req, res) => {
-  try {
-    const code = typeof req.query.code === 'string' ? req.query.code : '';
-    const state = typeof req.query.state === 'string' ? req.query.state : '';
-    if (!code || !state) {
-      res.status(400).send('Missing code or state');
-      return;
-    }
-    if (!TIKTOK_CLIENT_KEY || !TIKTOK_CLIENT_SECRET) {
-      res.status(500).send('TikTok credentials are not configured');
-      return;
-    }
-
-    const { clientId } = decodeState(state);
-    const { tokenRes, tokenData } = await exchangeTikTokToken(code, TIKTOK_REDIRECT_URI);
-    if (!tokenRes.ok || (tokenData.error?.code && tokenData.error.code !== 'ok')) {
-      res.status(400).send('TikTok token exchange failed');
-      return;
-    }
-
-    const tokenFields = readTikTokTokenFields(tokenData);
-    const missingFields = missingTikTokTokenFields(tokenFields);
-    if (missingFields.length) {
-      const message = `Missing token fields: ${missingFields.join(', ')}`;
-      console.error('TikTok token exchange missing fields', {
-        missingFields,
-        status: tokenRes.status,
-        body: redactTikTokTokenBody(tokenData),
-      });
-      res.status(400).send(`Token error: ${message}`);
-      return;
-    }
-    const { accessToken, refreshToken, openId, expiresIn, scope } = tokenFields;
-
-    const userRes = await fetch('https://open.tiktokapis.com/v2/user/info/?fields=open_id,union_id,avatar_url,display_name', {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
-    const userData: any = await userRes.json();
-    const username = getTikTokDisplayName(userData, openId);
-
-    await saveTikTokBinding({
-      clientId,
-      username,
-      openId,
-      accessToken,
-      refreshToken,
-      expiresIn,
-      scope,
-    });
-
-    res.send(`
-      <html><body style="font-family:sans-serif;text-align:center;padding:50px">
-        <h1>TikTok Connected!</h1>
-        <p>Account: @${username}</p>
-        <p>You can close this window and return to PublishOS.</p>
-        <script>setTimeout(() => window.close(), 3000);</script>
-      </body></html>
-    `);
-  } catch (error) {
-    handleRouteError(error, req, res);
-  }
-});
-
-router.get('/tiktok/bindings/:clientId', authenticateToken, async (req, res) => {
-  try {
-    const scopedClientId = clientIdFromAuth(req, req.params.clientId);
-    const bindings = await prisma.accountBinding.findMany({
-      where: { clientId: scopedClientId!, platform: 'tiktok', active: true },
-      select: {
-        id: true,
-        platform: true,
-        accountUsername: true,
-        platformUserId: true,
-        username: true,
-        status: true,
-        active: true,
-        expiresAt: true,
-        createdAt: true,
-      },
-      orderBy: { createdAt: 'desc' },
-    });
-    res.json({
-      success: true,
-      data: bindings.map((binding) => ({
-        ...binding,
-        username: presentTikTokBindingName(binding),
-        displayName: presentTikTokBindingName(binding),
-        openId: binding.platformUserId,
-        status: binding.active ? binding.status : 'revoked',
-      })),
-    });
-  } catch (error) {
-    handleRouteError(error, req, res);
-  }
-});
-
-router.delete('/tiktok/bindings/:id', authenticateToken, async (req, res) => {
-  try {
-    if (req.auth?.tokenType !== 'admin' && req.auth?.tokenType !== 'client') throw new AppError(403, 'forbidden', 'Insufficient permissions');
-    const binding = await prisma.accountBinding.findFirst({
-      where: {
-        id: String(req.params.id),
-        ...(req.auth.tokenType === 'client' ? { clientId: req.auth.clientId } : {}),
-      },
-      select: { id: true },
-    });
-    if (!binding) return res.status(404).json({ success: false, error: 'Binding not found' });
-    await prisma.accountBinding.update({
-      where: { id: String(req.params.id) },
-      data: { active: false, status: 'revoked' },
-    });
-    res.json({ success: true });
-  } catch (error) {
-    handleRouteError(error, req, res);
-  }
-});
-
+router.get('/tiktok/bindings/:clientId', authenticateToken, async (req, res, next) => { try { const clientId = clientIdFromAuth(req, req.params.clientId); const data = await prisma.accountBinding.findMany({ where: { clientId: clientId!, platform: 'tiktok', active: true }, select: { id: true, platform: true, accountUsername: true, username: true, platformUserId: true, status: true, active: true, expiresAt: true, createdAt: true }, orderBy: { createdAt: 'desc' } }); res.json({ success: true, data }); } catch (error) { next(error); } });
+router.delete('/tiktok/bindings/:id', authenticateToken, async (req, res, next) => { try { if (req.auth?.tokenType !== 'admin' && req.auth?.tokenType !== 'client') throw new AppError(403, 'forbidden', 'Insufficient permissions'); const binding = await prisma.accountBinding.findFirst({ where: { id: String(req.params.id), ...(req.auth.tokenType === 'client' ? { clientId: req.auth.clientId } : {}) } }); if (!binding) throw new AppError(404, 'not_found', 'Binding not found'); await prisma.accountBinding.update({ where: { id: binding.id }, data: { active: false, status: 'revoked' } }); res.json({ success: true }); } catch (error) { next(error); } });
 export default router;

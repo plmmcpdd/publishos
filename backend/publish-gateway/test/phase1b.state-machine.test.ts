@@ -71,8 +71,11 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await prisma?.$disconnect();
-  rmSync(testDirectory, { recursive: true, force: true });
+  try {
+    await prisma?.$disconnect();
+  } finally {
+    rmSync(testDirectory, { recursive: true, force: true });
+  }
 });
 
 describe('Phase 1B content state matrix', () => {

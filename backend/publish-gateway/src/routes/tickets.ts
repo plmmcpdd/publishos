@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { prisma } from '../lib/prisma';
 import { AppError } from '../middleware/errors';
+import { safeFetchWebsite } from '../services/safe-http-fetch';
 
 const router = Router();
 
@@ -185,18 +186,16 @@ async function runDiagnosis(ticketId: string): Promise<void> {
   }
 }
 
-// NOTE: SSRF RISK - fetch(ticket.website) can reach internal services.
-// Mitigation: admin-only access enforced above. Full SSRF protection deferred to production hardening.
 async function collectData(ticket: any): Promise<any> {
   const data: any = { company: ticket.companyName, address: ticket.address, industry: ticket.industry };
 
   // Collect website data if available
   if (ticket.website) {
     try {
-      const res = await fetch(ticket.website, { signal: AbortSignal.timeout(10000) });
-      const html = await res.text();
+      const result = await safeFetchWebsite(ticket.website);
+      const html = result.body;
       data.website = {
-        url: ticket.website,
+        url: result.url,
         htmlLength: html.length,
         hasSchema: html.includes('application/ld+json'),
         hasViewport: html.includes('viewport'),
@@ -207,7 +206,7 @@ async function collectData(ticket: any): Promise<any> {
         hasSSL: ticket.website.startsWith('https'),
       };
     } catch {
-      data.website = { url: ticket.website, error: 'Failed to fetch' };
+      data.website = { url: ticket.website, error: 'Website could not be safely fetched' };
     }
   }
 
