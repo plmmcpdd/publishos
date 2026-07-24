@@ -1,10 +1,11 @@
 import { Router } from 'express';
 import { prisma } from '../lib/prisma';
+import { AppError } from '../middleware/errors';
 
 const router = Router();
 
 // List tickets
-router.get('/tickets', async (req, res) => {
+router.get('/tickets', async (req, res, next) => {
   try {
     const status = typeof req.query.status === 'string' ? req.query.status : undefined;
     const where = status && status !== 'all' ? { status } : {};
@@ -15,96 +16,92 @@ router.get('/tickets', async (req, res) => {
     });
     res.json({ success: true, data: tickets });
   } catch (error) {
-    res.status(500).json({ success: false, error: String(error) });
+    next(new AppError(500, 'internal_error', 'Failed to fetch tickets'));
   }
 });
 
 // Get ticket detail
-router.get('/tickets/:id', async (req, res) => {
+router.get('/tickets/:id', async (req, res, next) => {
   try {
     const ticket = await prisma.ticket.findUnique({
       where: { id: req.params.id },
       include: { photos: true, diagnosis: true },
     });
     if (!ticket) {
-      res.status(404).json({ success: false, error: 'Ticket not found' });
-      return;
+      throw new AppError(404, 'not_found', 'Ticket not found');
     }
     res.json({ success: true, data: ticket });
   } catch (error) {
-    res.status(500).json({ success: false, error: String(error) });
+    next(error instanceof AppError ? error : new AppError(500, 'internal_error', 'Failed to fetch ticket'));
   }
 });
 
 // Create ticket
-router.post('/tickets', async (req, res) => {
+router.post('/tickets', async (req, res, next) => {
   try {
     const { companyName, address, website, industry, phone, painPoints, contactName, contactEmail, contactPhone } = req.body;
     if (!companyName || !address || !industry) {
-      res.status(400).json({ success: false, error: 'companyName, address, industry are required' });
-      return;
+      throw new AppError(400, 'validation_error', 'companyName, address, industry are required');
     }
     const ticket = await prisma.ticket.create({
       data: { companyName, address, website, industry, phone, painPoints, contactName, contactEmail, contactPhone },
     });
     res.json({ success: true, data: ticket });
   } catch (error) {
-    res.status(500).json({ success: false, error: String(error) });
+    next(error instanceof AppError ? error : new AppError(500, 'internal_error', 'Failed to create ticket'));
   }
 });
 
 // Update ticket status
-router.patch('/tickets/:id', async (req, res) => {
+router.patch('/tickets/:id', async (req, res, next) => {
   try {
     const { status, assignedTo, priority } = req.body;
-    const data: any = {};
+    const data: Record<string, unknown> = {};
     if (status) data.status = status;
     if (assignedTo !== undefined) data.assignedTo = assignedTo;
     if (priority) data.priority = priority;
     const ticket = await prisma.ticket.update({ where: { id: req.params.id }, data });
     res.json({ success: true, data: ticket });
   } catch (error) {
-    res.status(500).json({ success: false, error: String(error) });
+    next(error instanceof AppError ? error : new AppError(500, 'internal_error', 'Failed to update ticket'));
   }
 });
 
 // Upload ticket photo
-router.post('/tickets/:id/photos', async (req, res) => {
+router.post('/tickets/:id/photos', async (req, res, next) => {
   try {
     const { url, caption, type } = req.body;
     if (!url) {
-      res.status(400).json({ success: false, error: 'url is required' });
-      return;
+      throw new AppError(400, 'validation_error', 'url is required');
     }
     const photo = await prisma.ticketPhoto.create({
       data: { ticketId: req.params.id, url, caption, type },
     });
     res.json({ success: true, data: photo });
   } catch (error) {
-    res.status(500).json({ success: false, error: String(error) });
+    next(error instanceof AppError ? error : new AppError(500, 'internal_error', 'Failed to upload photo'));
   }
 });
 
 // Delete ticket photo
-router.delete('/tickets/:ticketId/photos/:photoId', async (req, res) => {
+router.delete('/tickets/:ticketId/photos/:photoId', async (req, res, next) => {
   try {
     await prisma.ticketPhoto.delete({ where: { id: req.params.photoId } });
     res.json({ success: true });
   } catch (error) {
-    res.status(500).json({ success: false, error: String(error) });
+    next(error instanceof AppError ? error : new AppError(500, 'internal_error', 'Failed to delete photo'));
   }
 });
 
 // Trigger diagnosis
-router.post('/tickets/:id/diagnose', async (req, res) => {
+router.post('/tickets/:id/diagnose', async (req, res, next) => {
   try {
     const ticket = await prisma.ticket.findUnique({
       where: { id: req.params.id },
       include: { photos: true },
     });
     if (!ticket) {
-      res.status(404).json({ success: false, error: 'Ticket not found' });
-      return;
+      throw new AppError(404, 'not_found', 'Ticket not found');
     }
     await prisma.ticket.update({ where: { id: req.params.id }, data: { status: 'diagnosing' } });
 
@@ -113,23 +110,22 @@ router.post('/tickets/:id/diagnose', async (req, res) => {
 
     res.json({ success: true, data: { message: 'Diagnosis started' } });
   } catch (error) {
-    res.status(500).json({ success: false, error: String(error) });
+    next(error instanceof AppError ? error : new AppError(500, 'internal_error', 'Failed to start diagnosis'));
   }
 });
 
 // Get diagnosis report
-router.get('/tickets/:id/report', async (req, res) => {
+router.get('/tickets/:id/report', async (req, res, next) => {
   try {
     const report = await prisma.diagnosisReport.findUnique({
       where: { ticketId: req.params.id },
     });
     if (!report) {
-      res.status(404).json({ success: false, error: 'Report not found' });
-      return;
+      throw new AppError(404, 'not_found', 'Report not found');
     }
     res.json({ success: true, data: report });
   } catch (error) {
-    res.status(500).json({ success: false, error: String(error) });
+    next(error instanceof AppError ? error : new AppError(500, 'internal_error', 'Failed to fetch report'));
   }
 });
 
@@ -189,6 +185,8 @@ async function runDiagnosis(ticketId: string): Promise<void> {
   }
 }
 
+// NOTE: SSRF RISK - fetch(ticket.website) can reach internal services.
+// Mitigation: admin-only access enforced above. Full SSRF protection deferred to production hardening.
 async function collectData(ticket: any): Promise<any> {
   const data: any = { company: ticket.companyName, address: ticket.address, industry: ticket.industry };
 

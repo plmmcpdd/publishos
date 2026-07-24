@@ -13,9 +13,11 @@ import statsRoutes from './routes/stats';
 import auditLogRoutes from './routes/audit-logs';
 import tiktokRoutes from './routes/tiktok';
 import metricsRoutes from './routes/metrics';
+import ticketRoutes from './routes/tickets';
 import { languageMiddleware } from './middleware/language';
 import { errorHandler, requestId } from './middleware/errors';
 import { initializeSecurityConfig } from './config/security';
+import { authenticateToken, requireAdmin } from './middleware/auth';
 
 const deprecated = (_req: express.Request, res: express.Response, next: express.NextFunction) => {
   res.setHeader('Deprecation', 'true');
@@ -43,6 +45,7 @@ export function createApp() {
   app.use('/v1/stats', statsRoutes);
   app.use('/v1', metricsRoutes);
   app.use('/v1/audit-logs', auditLogRoutes);
+  app.use('/v1', authenticateToken, requireAdmin, ticketRoutes);
   app.use('/api/v1', deprecated);
   app.use('/api/v1/contents', apiContentRoutes);
   app.use('/api/v1/stats', statsRoutes);

@@ -158,3 +158,32 @@ describe('Phase 1A authentication and tenant isolation', () => {
     expect((await request(app).post('/v1/upload/video').set('Authorization', `Bearer ${adminToken}`)).status).toBe(400);
   });
 });
+
+describe('Ticket routes require admin authentication', () => {
+  it('rejects anonymous access to tickets', async () => {
+    const res = await request(app).get('/v1/tickets');
+    expect(res.status).toBe(401);
+  });
+
+  it('rejects client token access to tickets', async () => {
+    const res = await request(app).get('/v1/tickets').set('Authorization', `Bearer ${clientAToken}`);
+    expect(res.status).toBe(403);
+  });
+
+  it('allows admin to list and create tickets', async () => {
+    const list = await request(app).get('/v1/tickets').set('Authorization', `Bearer ${adminToken}`);
+    expect(list.status).toBe(200);
+    expect(list.body.success).toBe(true);
+
+    const created = await request(app)
+      .post('/v1/tickets')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ companyName: 'Test Corp', address: '123 Main St', industry: 'plumbing' });
+    expect(created.status).toBe(200);
+    expect(created.body.data.companyName).toBe('Test Corp');
+
+    const detail = await request(app).get(`/v1/tickets/${created.body.data.id}`).set('Authorization', `Bearer ${adminToken}`);
+    expect(detail.status).toBe(200);
+    expect(detail.body.data.id).toBe(created.body.data.id);
+  });
+});
