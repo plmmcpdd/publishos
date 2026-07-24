@@ -13,7 +13,7 @@ const VIDEO_TYPES = new Set(['video/mp4', 'video/quicktime', 'video/x-msvideo', 
 type FetchPolicy = { acceptedTypes: Set<string>; maxBytes: number; accept: string };
 type PinnedResponse = { status: number; headers: http.IncomingHttpHeaders; body: Buffer };
 
-class Deadline {
+export class Deadline {
   readonly at: number;
   constructor(timeoutMs = DEFAULT_TIMEOUT_MS) { this.at = Date.now() + timeoutMs; }
   remainingMs(): number { return Math.max(0, this.at - Date.now()); }
@@ -58,7 +58,9 @@ async function resolvePublic(hostname: string, deadline: Deadline): Promise<stri
   return [...new Set(records.map((record) => record.address))];
 }
 
-function requestPinned(url: URL, addresses: string[], policy: FetchPolicy, deadline: Deadline): Promise<PinnedResponse> {
+type TransportFn = (url: string | URL, options: http.RequestOptions, callback: (res: http.IncomingMessage) => void) => http.ClientRequest;
+
+function requestPinned(url: URL, addresses: string[], policy: FetchPolicy, deadline: Deadline, transportOverride?: { http: TransportFn; https: TransportFn }): Promise<PinnedResponse> {
   return new Promise((resolve, reject) => {
     let req: http.ClientRequest | undefined; let res: http.IncomingMessage | undefined; let settled = false; let index = 0; let timer: NodeJS.Timeout | undefined;
     const finish = (error?: Error, value?: PinnedResponse) => {
@@ -69,20 +71,34 @@ function requestPinned(url: URL, addresses: string[], policy: FetchPolicy, deadl
     const remaining = deadline.remainingMs();
     if (!remaining) return timeout();
     timer = setTimeout(timeout, remaining);
-    const transport = url.protocol === 'https:' ? https : http;
+    const transportFn: TransportFn = transportOverride
+      ? (url.protocol === 'https:' ? transportOverride.https : transportOverride.http)
+      : ((url.protocol === 'https:' ? https.request : http.request) as TransportFn);
     try {
-      req = transport.request(url, {
+      req = transportFn(url, {
         method: 'GET',
         headers: { Accept: policy.accept, 'Accept-Encoding': 'identity', Host: url.host },
         servername: url.hostname,
         // This lookup returns only previously validated IPs. Node never gets a chance to resolve the hostname again.
-        lookup: (_host, _options, callback) => { const address = addresses[index++ % addresses.length]; callback(null, address, net.isIP(address) as 4 | 6); },
-      }, (response) => {
+        lookup: (_host: string, _options: object, callback: (err: NodeJS.ErrnoException | null, address: string, family: number) => void) => { const address = addresses[index++ % addresses.length]; callback(null, address, net.isIP(address) as 4 | 6); },
+      } as http.RequestOptions, (response: http.IncomingMessage) => {
         res = response;
         response.once('aborted', () => finish(new AppError(502, 'safe_fetch_failed', 'Remote response was interrupted')));
         response.once('error', () => finish(new AppError(502, 'safe_fetch_failed', 'Remote response could not be safely fetched')));
         const status = response.statusCode || 0;
-        if (status >= 300 && status < 400) { response.resume(); return finish(undefined, { status, headers: response.headers, body: Buffer.alloc(0) }); }
+        if (status >= 300 && status < 400) {
+          // Immediately destroy redirect response and socket to prevent slow-drip body from
+          // consuming resources while we follow the redirect. The shared deadline ensures
+          // the redirect chain cannot extend total time beyond the original budget.
+          // finish() is idempotent (settled guard). Resolve first, then destroy.
+          // If destroy triggers an error/abort event, finish() will no-op.
+          const redirectResult: PinnedResponse = { status, headers: response.headers, body: Buffer.alloc(0) };
+          finish(undefined, redirectResult);
+          response.destroy();
+          req!.destroy();
+          req!.socket?.destroy();
+          return;
+        }
         const type = String(response.headers['content-type'] || '').split(';', 1)[0].trim().toLowerCase();
         if (status < 200 || status >= 300 || !policy.acceptedTypes.has(type)) return finish(new AppError(400, 'unsafe_url', 'Remote response could not be safely fetched'));
         const declared = Number(response.headers['content-length']);
@@ -97,15 +113,23 @@ function requestPinned(url: URL, addresses: string[], policy: FetchPolicy, deadl
   });
 }
 
-async function safeFetch(value: string, policy: FetchPolicy, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<{ url: string; body: Buffer }> {
+export type SafeFetchOverrides = {
+  resolvePublic?: (hostname: string, deadline: Deadline) => Promise<string[]>;
+  transport?: { http: TransportFn; https: TransportFn };
+  skipPortValidation?: boolean;
+};
+
+async function safeFetch(value: string, policy: FetchPolicy, timeoutMs = DEFAULT_TIMEOUT_MS, overrides?: SafeFetchOverrides): Promise<{ url: string; body: Buffer }> {
   let current: URL;
   try { current = new URL(value); } catch { throw new AppError(400, 'unsafe_url', 'Remote URL could not be safely fetched'); }
   const deadline = new Deadline(timeoutMs);
   for (let count = 0; count <= MAX_REDIRECTS; count += 1) {
-    validateUrl(current);
-    const addresses = await resolvePublic(current.hostname, deadline);
+    if (!overrides?.skipPortValidation) validateUrl(current);
+    const addresses = overrides?.resolvePublic
+      ? await overrides.resolvePublic(current.hostname, deadline)
+      : await resolvePublic(current.hostname, deadline);
     if (!addresses.length) throw new AppError(400, 'unsafe_url', 'Remote URL could not be safely fetched');
-    const result = await requestPinned(current, addresses, policy, deadline);
+    const result = await requestPinned(current, addresses, policy, deadline, overrides?.transport);
     if (result.status >= 300 && result.status < 400) {
       const location = result.headers.location;
       if (!location || count === MAX_REDIRECTS) throw new AppError(400, 'unsafe_redirect', 'Remote URL could not be safely fetched');
@@ -126,4 +150,18 @@ export async function safeFetchWebsite(value: string): Promise<{ url: string; bo
 export async function safeDownloadExternalMedia(value: string, maxBytes: number): Promise<Buffer> {
   if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) throw new Error('External media limit must be a positive integer');
   return (await safeFetch(value, { acceptedTypes: VIDEO_TYPES, maxBytes, accept: 'video/mp4, video/quicktime, video/x-msvideo, video/webm' })).body;
+}
+
+/** Test-only entry point: exercises the real DNS→pin→transport→redirect→cleanup path with injectable dependencies. */
+export async function safeFetchWithOverrides(
+  value: string,
+  overrides: SafeFetchOverrides,
+  opts?: { acceptedTypes?: Set<string>; maxBytes?: number; accept?: string; timeoutMs?: number },
+): Promise<{ url: string; body: Buffer }> {
+  const policy: FetchPolicy = {
+    acceptedTypes: opts?.acceptedTypes ?? WEBSITE_TYPES,
+    maxBytes: opts?.maxBytes ?? WEBSITE_MAX_BODY_BYTES,
+    accept: opts?.accept ?? 'text/html, application/xhtml+xml, text/plain',
+  };
+  return safeFetch(value, policy, opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS, overrides);
 }

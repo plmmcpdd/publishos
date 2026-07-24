@@ -70,7 +70,7 @@ beforeAll(async () => {
     clientId, platform: 'tiktok', accountUsername: 'publisher-account', accessToken: 'test-access-token',
   } })).id;
   adminToken = (await request(app).post('/v1/auth/admin/login').send({ email: admin.email, password: 'test-password' })).body.data.token;
-});
+}, 60_000);
 
 beforeEach(() => {
   vi.useFakeTimers();

@@ -22,7 +22,7 @@ const publisherMock = vi.hoisted(() => ({ publishToTikTok: vi.fn().mockResolvedV
 vi.mock('../src/services/publisher', () => publisherMock);
 
 import { defaultRateLimitStore } from '../src/middleware/http-security';
-import { isUnsafeAddress, safeFetchWebsite } from '../src/services/safe-http-fetch';
+import { isUnsafeAddress, safeFetchWebsite, safeFetchWithOverrides, type SafeFetchOverrides, Deadline } from '../src/services/safe-http-fetch';
 import { AppError } from '../src/middleware/errors';
 import { getSecurityConfig } from '../src/config/security';
 import { allowTestNetworkTarget, clearTestNetworkAllowlist } from './setup/no-network';
@@ -124,6 +124,47 @@ async function stopFixtureServer(): Promise<void> {
       resolve();
     }
   });
+}
+
+// ─── Test transport that routes requests to the fixture server ───────────────
+// This transport bypasses port validation so that `safeFetchWithOverrides` can
+// exercise the full DNS→pin→request→redirect→cleanup path against a local fixture.
+function makeTestTransport(targetPort: number): { http: (url: string | URL, options: http.RequestOptions, callback: (res: http.IncomingMessage) => void) => http.ClientRequest; https: (url: string | URL, options: http.RequestOptions, callback: (res: http.IncomingMessage) => void) => http.ClientRequest } {
+  const httpTransport = (url: string | URL, options: http.RequestOptions, callback: (res: http.IncomingMessage) => void): http.ClientRequest => {
+    const parsedUrl = typeof url === 'string' ? new URL(url) : url;
+    const reqOptions = { ...options, host: '127.0.0.1', port: targetPort, hostname: '127.0.0.1' };
+    return http.request(reqOptions, callback);
+  };
+  return { http: httpTransport, https: httpTransport };
+}
+
+function makeFakeDnsResolver(hostname: string, addresses: { address: string; family: 4 | 6 }[]): (hostname: string, deadline: Deadline) => Promise<string[]> {
+  return async (h: string) => {
+    // Empty hostname (e.g., file:// protocol) → reject
+    if (!h) throw new AppError(400, 'unsafe_url', 'Empty hostname');
+    // Strip IPv6 brackets: URL parser gives '[::1]' but isIP wants '::1'
+    const stripped = h.replace(/^\[|\]$/g, '');
+    if (net.isIP(stripped)) {
+      return isUnsafeAddress(stripped) ? [] : [stripped];
+    }
+    const key = h.toLowerCase();
+    if (key === hostname.toLowerCase()) return addresses.map((a) => a.address);
+    const err = new Error(`getaddrinfo ENOTFOUND ${h}`) as any;
+    err.code = 'ENOTFOUND';
+    throw err;
+  };
+}
+
+function makeTestOverrides(
+  hostname: string,
+  addresses: { address: string; family: 4 | 6 }[],
+  targetPort: number,
+): SafeFetchOverrides {
+  return {
+    resolvePublic: makeFakeDnsResolver(hostname, addresses),
+    transport: makeTestTransport(targetPort),
+    skipPortValidation: true,
+  };
 }
 
 // ─── JWT helper ───────────────────────────────────────────────────────────────
@@ -705,69 +746,52 @@ describe('Redirect security', () => {
     installFakeDns();
   });
 
-  it('rejects redirect to file:// protocol', async () => {
+  it('rejects redirect to file:// protocol via DNS resolver on empty hostname', async () => {
     const port = await startFixtureServer((_req, res) => {
       res.writeHead(302, { Location: 'file:///etc/passwd' });
       res.end();
     });
-    setFakeDns('file-redir.test', [{ address: '127.0.0.1', family: 4 }]);
-    try {
-      await safeFetchWebsite(`http://file-redir.test:${port}`);
-    } catch (err: any) {
-      expect(err).toBeDefined();
-    }
+    const overrides = makeTestOverrides('file-redir.test', [{ address: '127.0.0.1', family: 4 }], port);
+    // file:// has empty hostname → resolver rejects → unsafe_url
+    await expect(safeFetchWithOverrides('http://file-redir.test/', overrides)).rejects.toMatchObject({ code: 'unsafe_url' });
   });
 
-  it('rejects redirect to localhost', async () => {
+  it('rejects redirect to localhost via DNS resolver', async () => {
     const port = await startFixtureServer((_req, res) => {
       res.writeHead(302, { Location: 'http://127.0.0.1/' });
       res.end();
     });
-    setFakeDns('public.test', [{ address: '127.0.0.1', family: 4 }]);
-    try {
-      await safeFetchWebsite(`http://public.test:${port}`);
-    } catch (err: any) {
-      expect(err).toBeDefined();
-    }
+    const overrides = makeTestOverrides('public.test', [{ address: '127.0.0.1', family: 4 }], port);
+    // IP-as-hostname → resolver detects 127.0.0.1 as unsafe → empty addresses
+    await expect(safeFetchWithOverrides('http://public.test/', overrides)).rejects.toMatchObject({ code: 'unsafe_url' });
   });
 
-  it('rejects redirect to private network', async () => {
+  it('rejects redirect to private network via DNS resolver', async () => {
     const port = await startFixtureServer((_req, res) => {
       res.writeHead(302, { Location: 'http://10.0.0.1/' });
       res.end();
     });
-    setFakeDns('public.test', [{ address: '127.0.0.1', family: 4 }]);
-    try {
-      await safeFetchWebsite(`http://public.test:${port}`);
-    } catch (err: any) {
-      expect(err).toBeDefined();
-    }
+    const overrides = makeTestOverrides('public.test', [{ address: '127.0.0.1', family: 4 }], port);
+    await expect(safeFetchWithOverrides('http://public.test/', overrides)).rejects.toMatchObject({ code: 'unsafe_url' });
   });
 
-  it('rejects redirect to metadata endpoint', async () => {
+  it('rejects redirect to metadata endpoint via DNS resolver', async () => {
     const port = await startFixtureServer((_req, res) => {
       res.writeHead(302, { Location: 'http://169.254.169.254/latest/meta-data/' });
       res.end();
     });
-    setFakeDns('public.test', [{ address: '127.0.0.1', family: 4 }]);
-    try {
-      await safeFetchWebsite(`http://public.test:${port}`);
-    } catch (err: any) {
-      expect(err).toBeDefined();
-    }
+    const overrides = makeTestOverrides('public.test', [{ address: '127.0.0.1', family: 4 }], port);
+    await expect(safeFetchWithOverrides('http://public.test/', overrides)).rejects.toMatchObject({ code: 'unsafe_url' });
   });
 
-  it('rejects redirect to IPv6 private address', async () => {
+  it('rejects redirect to IPv6 private address via DNS resolver', async () => {
     const port = await startFixtureServer((_req, res) => {
       res.writeHead(302, { Location: 'http://[::1]/' });
       res.end();
     });
-    setFakeDns('public.test', [{ address: '127.0.0.1', family: 4 }]);
-    try {
-      await safeFetchWebsite(`http://public.test:${port}`);
-    } catch (err: any) {
-      expect(err).toBeDefined();
-    }
+    const overrides = makeTestOverrides('public.test', [{ address: '127.0.0.1', family: 4 }], port);
+    // ::1 → resolver detects as unsafe → empty addresses
+    await expect(safeFetchWithOverrides('http://public.test/', overrides)).rejects.toMatchObject({ code: 'unsafe_url' });
   });
 
   it('rejects redirect to hostname that DNS resolves to private', async () => {
@@ -775,23 +799,28 @@ describe('Redirect security', () => {
       res.writeHead(302, { Location: 'http://evil.internal/' });
       res.end();
     });
-    setFakeDns('public.test', [{ address: '127.0.0.1', family: 4 }]);
-    setFakeDns('evil.internal', [{ address: '10.0.0.1', family: 4 }]);
-    try {
-      await safeFetchWebsite(`http://public.test:${port}`);
-    } catch (err: any) {
-      expect(err).toBeDefined();
-    }
+    const resolver = async (hostname: string) => {
+      if (hostname === 'public.test') return ['127.0.0.1'];
+      if (hostname === 'evil.internal') return []; // Production resolver returns [] for private
+      throw new Error(`Unexpected hostname: ${hostname}`);
+    };
+    const overrides: SafeFetchOverrides = {
+      resolvePublic: resolver,
+      transport: makeTestTransport(port),
+      skipPortValidation: true,
+    };
+    await expect(safeFetchWithOverrides('http://public.test/', overrides)).rejects.toMatchObject({ code: 'unsafe_url' });
   });
 
-  it('re-resolves DNS on each redirect hop', async () => {
-    // Verify the implementation re-resolves DNS at each redirect by checking
-    // that resolvePublic is called inside the redirect loop
+  it('redirect re-resolves DNS at each hop (source verification)', async () => {
+    // The safeFetch for-loop calls resolvePublic(current.hostname, deadline) on each iteration,
+    // where current is updated from the redirect Location header. This guarantees DNS
+    // re-resolution at each redirect hop, regardless of whether the hostname changes.
     const source = fs.readFileSync(path.join(gatewayRoot, 'src/services/safe-http-fetch.ts'), 'utf8');
-    // The for loop calls resolvePublic with current.hostname on each iteration.
     expect(source).toContain('resolvePublic(current.hostname, deadline)');
-    // Verify it's inside a for loop (redirect handling)
-    expect(source).toMatch(/for\s*\(/);
+    expect(source).toMatch(/for\s*\(let count = 0; count <= MAX_REDIRECTS/);
+    // current is updated with the redirect URL before the next iteration
+    expect(source).toMatch(/current = new URL\(location, current\)/);
   });
 
   it('handles relative redirect Location', async () => {
@@ -804,32 +833,56 @@ describe('Redirect security', () => {
         res.end('<html><body>Final</body></html>');
       }
     });
-    setFakeDns('relative.test', [{ address: '127.0.0.1', family: 4 }]);
-    try { await safeFetchWebsite(`http://relative.test:${port}/start`); } catch { /* expected */ }
+    const overrides = makeTestOverrides('relative.test', [{ address: '127.0.0.1', family: 4 }], port);
+    const result = await safeFetchWithOverrides('http://relative.test/start', overrides);
+    // The redirect is followed: body comes from the final response
+    expect(result.body.toString()).toContain('Final');
   });
 
-  it('handles protocol-relative redirect', async () => {
-    const port = await startFixtureServer((_req, res) => {
-      res.writeHead(302, { Location: `//other.test:${port}/` });
-      res.end();
-    });
-    setFakeDns('proto.test', [{ address: '127.0.0.1', family: 4 }]);
-    setFakeDns('other.test', [{ address: '127.0.0.1', family: 4 }]);
-    try { await safeFetchWebsite(`http://proto.test:${port}`); } catch { /* expected */ }
+  it('handles protocol-relative redirect (source verification)', async () => {
+    // new URL('//other.test/path', 'http://proto.test/proto') correctly resolves
+    // to 'http://other.test/path'. The redirect loop then resolves the new hostname.
+    const source = fs.readFileSync(path.join(gatewayRoot, 'src/services/safe-http-fetch.ts'), 'utf8');
+    expect(source).toContain('new URL(location, current)');
+    // This handles protocol-relative, absolute, and relative redirect Locations
   });
 
   it('rejects redirect loop (max 3)', async () => {
     const port = await startFixtureServer((_req, res) => {
-      res.writeHead(302, { Location: `http://127.0.0.1:${fixtureServerPort}/loop` });
+      res.writeHead(302, { Location: '/loop' });
       res.end();
     });
-    setFakeDns('loop.test', [{ address: '127.0.0.1', family: 4 }]);
-    try {
-      await safeFetchWebsite(`http://loop.test:${port}`);
-    } catch (err: any) {
-      // Port validation (unsafe_url) or redirect limit (unsafe_redirect) both acceptable
-      expect(['unsafe_url', 'unsafe_redirect']).toContain(err.code);
-    }
+    const overrides = makeTestOverrides('loop.test', [{ address: '127.0.0.1', family: 4 }], port);
+    await expect(safeFetchWithOverrides('http://loop.test/loop', overrides)).rejects.toMatchObject({ code: 'unsafe_redirect' });
+  });
+
+  it('destroys redirect response immediately', async () => {
+    // Verify by reading source: finish is called before response.destroy
+    const source = fs.readFileSync(path.join(gatewayRoot, 'src/services/safe-http-fetch.ts'), 'utf8');
+    // The redirect branch should call finish() then destroy
+    expect(source).toContain('finish(undefined, redirectResult)');
+    expect(source).toMatch(/response\.destroy\(\)/);
+    expect(source).toMatch(/req.*\.destroy\(\)/);
+  });
+
+  it('shared deadline prevents redirect chain from extending time', async () => {
+    const port = await startFixtureServer((req, res) => {
+      if (req.url === '/first') {
+        setTimeout(() => {
+          res.writeHead(302, { Location: '/final' });
+          res.end();
+        }, 200);
+      } else {
+        res.writeHead(200, { 'Content-Type': 'text/html' });
+        res.end('<html><body>OK</body></html>');
+      }
+    });
+    const overrides = makeTestOverrides('deadline.test', [{ address: '127.0.0.1', family: 4 }], port);
+    const start = Date.now();
+    const result = await safeFetchWithOverrides('http://deadline.test/first', overrides, { timeoutMs: 5000 });
+    const elapsed = Date.now() - start;
+    expect(result.body.toString()).toContain('OK');
+    expect(elapsed).toBeLessThan(5000);
   });
 });
 
@@ -838,17 +891,14 @@ describe('Redirect security', () => {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 describe('Response resource limits', () => {
-  beforeEach(() => {
-    installFakeDns();
-  });
-
   it('accepts text/html content type', async () => {
     const port = await startFixtureServer((_req, res) => {
       res.writeHead(200, { 'Content-Type': 'text/html' });
       res.end('<html><body>OK</body></html>');
     });
-    setFakeDns('html.test', [{ address: '127.0.0.1', family: 4 }]);
-    try { await safeFetchWebsite(`http://html.test:${port}`); } catch { /* port restriction */ }
+    const overrides = makeTestOverrides('html.test', [{ address: '127.0.0.1', family: 4 }], port);
+    const result = await safeFetchWithOverrides('http://html.test/', overrides);
+    expect(result.body.toString()).toContain('OK');
   });
 
   it('accepts text/plain content type', async () => {
@@ -856,8 +906,9 @@ describe('Response resource limits', () => {
       res.writeHead(200, { 'Content-Type': 'text/plain' });
       res.end('OK');
     });
-    setFakeDns('plain.test', [{ address: '127.0.0.1', family: 4 }]);
-    try { await safeFetchWebsite(`http://plain.test:${port}`); } catch { /* port restriction */ }
+    const overrides = makeTestOverrides('plain.test', [{ address: '127.0.0.1', family: 4 }], port);
+    const result = await safeFetchWithOverrides('http://plain.test/', overrides);
+    expect(result.body.toString()).toBe('OK');
   });
 
   it('accepts application/xhtml+xml content type', async () => {
@@ -865,8 +916,9 @@ describe('Response resource limits', () => {
       res.writeHead(200, { 'Content-Type': 'application/xhtml+xml' });
       res.end('<html/>');
     });
-    setFakeDns('xhtml.test', [{ address: '127.0.0.1', family: 4 }]);
-    try { await safeFetchWebsite(`http://xhtml.test:${port}`); } catch { /* port restriction */ }
+    const overrides = makeTestOverrides('xhtml.test', [{ address: '127.0.0.1', family: 4 }], port);
+    const result = await safeFetchWithOverrides('http://xhtml.test/', overrides);
+    expect(result.body.toString()).toBe('<html/>');
   });
 
   it('rejects application/octet-stream content type', async () => {
@@ -874,12 +926,8 @@ describe('Response resource limits', () => {
       res.writeHead(200, { 'Content-Type': 'application/octet-stream' });
       res.end(Buffer.from([0x00, 0x01, 0x02]));
     });
-    setFakeDns('binary.test', [{ address: '127.0.0.1', family: 4 }]);
-    try {
-      await safeFetchWebsite(`http://binary.test:${port}`);
-    } catch (err: any) {
-      expect(err).toBeDefined();
-    }
+    const overrides = makeTestOverrides('binary.test', [{ address: '127.0.0.1', family: 4 }], port);
+    await expect(safeFetchWithOverrides('http://binary.test/', overrides)).rejects.toMatchObject({ code: 'unsafe_url' });
   });
 
   it('rejects image/* content type', async () => {
@@ -887,39 +935,27 @@ describe('Response resource limits', () => {
       res.writeHead(200, { 'Content-Type': 'image/png' });
       res.end(Buffer.from([0x89, 0x50, 0x4e, 0x47]));
     });
-    setFakeDns('img.test', [{ address: '127.0.0.1', family: 4 }]);
-    try {
-      await safeFetchWebsite(`http://img.test:${port}`);
-    } catch (err: any) {
-      expect(err).toBeDefined();
-    }
+    const overrides = makeTestOverrides('img.test', [{ address: '127.0.0.1', family: 4 }], port);
+    await expect(safeFetchWithOverrides('http://img.test/', overrides)).rejects.toMatchObject({ code: 'unsafe_url' });
   });
 
-  it('rejects video/* content type', async () => {
+  it('rejects video/* content type for website fetch', async () => {
     const port = await startFixtureServer((_req, res) => {
       res.writeHead(200, { 'Content-Type': 'video/mp4' });
       res.end(Buffer.from([0x00, 0x00, 0x00, 0x1c]));
     });
-    setFakeDns('vid.test', [{ address: '127.0.0.1', family: 4 }]);
-    try {
-      await safeFetchWebsite(`http://vid.test:${port}`);
-    } catch (err: any) {
-      expect(err).toBeDefined();
-    }
+    const overrides = makeTestOverrides('vid.test', [{ address: '127.0.0.1', family: 4 }], port);
+    await expect(safeFetchWithOverrides('http://vid.test/', overrides)).rejects.toMatchObject({ code: 'unsafe_url' });
   });
 
-  it('rejects body exceeding 2 MiB', async () => {
+  it('rejects body exceeding 2 MiB via Content-Length', async () => {
     const bigBody = 'x'.repeat(2 * 1024 * 1024 + 1);
     const port = await startFixtureServer((_req, res) => {
       res.writeHead(200, { 'Content-Type': 'text/plain', 'Content-Length': String(bigBody.length) });
       res.end(bigBody);
     });
-    setFakeDns('big.test', [{ address: '127.0.0.1', family: 4 }]);
-    try {
-      await safeFetchWebsite(`http://big.test:${port}`);
-    } catch (err: any) {
-      expect(err).toBeDefined();
-    }
+    const overrides = makeTestOverrides('big.test', [{ address: '127.0.0.1', family: 4 }], port);
+    await expect(safeFetchWithOverrides('http://big.test/', overrides)).rejects.toMatchObject({ code: 'response_too_large' });
   });
 
   it('accepts body at exactly 2 MiB', async () => {
@@ -928,8 +964,9 @@ describe('Response resource limits', () => {
       res.writeHead(200, { 'Content-Type': 'text/plain', 'Content-Length': String(exactBody.length) });
       res.end(exactBody);
     });
-    setFakeDns('exact.test', [{ address: '127.0.0.1', family: 4 }]);
-    try { await safeFetchWebsite(`http://exact.test:${port}`); } catch { /* port restriction */ }
+    const overrides = makeTestOverrides('exact.test', [{ address: '127.0.0.1', family: 4 }], port);
+    const result = await safeFetchWithOverrides('http://exact.test/', overrides);
+    expect(result.body.length).toBe(2 * 1024 * 1024);
   });
 
   it('rejects Content-Length exceeding limit', async () => {
@@ -937,12 +974,22 @@ describe('Response resource limits', () => {
       res.writeHead(200, { 'Content-Type': 'text/plain', 'Content-Length': String(3 * 1024 * 1024) });
       res.end('');
     });
-    setFakeDns('cl-big.test', [{ address: '127.0.0.1', family: 4 }]);
-    try {
-      await safeFetchWebsite(`http://cl-big.test:${port}`);
-    } catch (err: any) {
-      expect(err).toBeDefined();
-    }
+    const overrides = makeTestOverrides('cl-big.test', [{ address: '127.0.0.1', family: 4 }], port);
+    await expect(safeFetchWithOverrides('http://cl-big.test/', overrides)).rejects.toMatchObject({ code: 'response_too_large' });
+  });
+
+  it('rejects chunked body exceeding limit', async () => {
+    const port = await startFixtureServer((_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'text/plain', 'Transfer-Encoding': 'chunked' });
+      // Send chunks that total > 2MiB
+      const chunkSize = 1024 * 1024; // 1 MiB
+      res.write('x'.repeat(chunkSize));
+      res.write('x'.repeat(chunkSize));
+      res.write('x'.repeat(10)); // now > 2MiB
+      res.end();
+    });
+    const overrides = makeTestOverrides('chunked-big.test', [{ address: '127.0.0.1', family: 4 }], port);
+    await expect(safeFetchWithOverrides('http://chunked-big.test/', overrides)).rejects.toMatchObject({ code: 'response_too_large' });
   });
 
   it('handles non-2xx response', async () => {
@@ -950,12 +997,8 @@ describe('Response resource limits', () => {
       res.writeHead(404, { 'Content-Type': 'text/html' });
       res.end('<html><body>Not Found</body></html>');
     });
-    setFakeDns('notfound.test', [{ address: '127.0.0.1', family: 4 }]);
-    try {
-      await safeFetchWebsite(`http://notfound.test:${port}`);
-    } catch (err: any) {
-      expect(err).toBeDefined();
-    }
+    const overrides = makeTestOverrides('notfound.test', [{ address: '127.0.0.1', family: 4 }], port);
+    await expect(safeFetchWithOverrides('http://notfound.test/', overrides)).rejects.toMatchObject({ code: 'unsafe_url' });
   });
 });
 
@@ -964,43 +1007,57 @@ describe('Response resource limits', () => {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 describe('Timeout and interruption', () => {
-  beforeEach(() => {
-    installFakeDns();
-  });
+  it('times out on slow DNS via injected resolver', async () => {
+    const slowResolver = async (_hostname: string, deadline: Deadline) => {
+      // Simulate slow DNS that exceeds the deadline
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      return ['93.184.216.34'];
+    };
+    const overrides: SafeFetchOverrides = {
+      resolvePublic: slowResolver,
+      skipPortValidation: true,
+    };
+    await expect(safeFetchWithOverrides('http://slow-dns.test/', overrides, { timeoutMs: 50 })).rejects.toMatchObject({ code: 'safe_fetch_timeout' });
+  }, 10_000);
 
-  it('times out on slow DNS', async () => {
-    vi.spyOn(dns.promises, 'lookup').mockImplementation(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 12000));
-      return [{ address: '93.184.216.34', family: 4 }];
+  it('fails cleanly on unreachable target', async () => {
+    // The no-network guard blocks real connections. This test verifies that
+    // the transport fails cleanly (timeout or connection error) without hanging.
+    const overrides: SafeFetchOverrides = {
+      resolvePublic: async () => ['93.184.216.34'],
+      skipPortValidation: true,
+    };
+    // Error code depends on whether the deadline fires before the connection error
+    await expect(safeFetchWithOverrides('http://unreachable.test/', overrides, { timeoutMs: 200 })).rejects.toSatisfy(
+      (err: any) => err.code === 'safe_fetch_timeout' || err.code === 'safe_fetch_failed',
+    );
+  }, 10_000);
+
+  it('times out on slow headers', async () => {
+    const port = await startFixtureServer((_req, res) => {
+      // Delay sending headers
+      setTimeout(() => {
+        res.writeHead(200, { 'Content-Type': 'text/html' });
+        res.end('<html>OK</html>');
+      }, 500);
     });
+    const overrides = makeTestOverrides('slow-headers.test', [{ address: '127.0.0.1', family: 4 }], port);
+    await expect(safeFetchWithOverrides('http://slow-headers.test/', overrides, { timeoutMs: 100 })).rejects.toMatchObject({ code: 'safe_fetch_timeout' });
+  }, 10_000);
 
-    try {
-      await safeFetchWebsite('http://slow-dns.test');
-    } catch (err: any) {
-      expect(err).toBeDefined();
-    }
-  }, 15_000);
-
-  it('times out on slow connection', async () => {
-    const server = net.createServer();
-    const port = await new Promise<number>((resolve) => {
-      // Restore original dns.lookup for server creation
-      const desc = Object.getOwnPropertyDescriptor(dns, 'lookup');
-      Object.defineProperty(dns, 'lookup', { ...desc, value: savedDnsLookup });
-      server.listen(0, '127.0.0.1', () => {
-        resolve((server.address() as net.AddressInfo).port);
-      });
+  it('times out on slow body drip', async () => {
+    const port = await startFixtureServer((_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      // Send first byte then drip slowly
+      res.write('<');
+      const interval = setInterval(() => {
+        try { res.write('x'); } catch { clearInterval(interval); }
+      }, 100);
+      res.on('close', () => clearInterval(interval));
     });
-    allowTestNetworkTarget({ protocol: 'http:', hostname: '127.0.0.1', port });
-    setFakeDns('slow.test', [{ address: '127.0.0.1', family: 4 }]);
-
-    try {
-      await safeFetchWebsite(`http://slow.test:${port}`);
-    } catch (err: any) {
-      expect(err).toBeDefined();
-    }
-    server.close();
-  }, 15_000);
+    const overrides = makeTestOverrides('slow-body.test', [{ address: '127.0.0.1', family: 4 }], port);
+    await expect(safeFetchWithOverrides('http://slow-body.test/', overrides, { timeoutMs: 200 })).rejects.toMatchObject({ code: 'safe_fetch_timeout' });
+  }, 10_000);
 
   it('does not retry after connection error', async () => {
     let connectionAttempts = 0;
@@ -1015,12 +1072,38 @@ describe('Timeout and interruption', () => {
         resolve((server.address() as net.AddressInfo).port);
       });
     });
-    allowTestNetworkTarget({ protocol: 'http:', hostname: '127.0.0.1', port });
-    setFakeDns('retry.test', [{ address: '127.0.0.1', family: 4 }]);
-
-    try { await safeFetchWebsite(`http://retry.test:${port}`); } catch { /* expected */ }
+    const overrides = makeTestOverrides('retry.test', [{ address: '127.0.0.1', family: 4 }], port);
+    await expect(safeFetchWithOverrides('http://retry.test/', overrides)).rejects.toBeDefined();
     expect(connectionAttempts).toBeLessThanOrEqual(1);
     server.close();
+  });
+
+  it('deadline code is safe_fetch_timeout', async () => {
+    const slowResolver = async (_hostname: string) => {
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      return ['127.0.0.1'];
+    };
+    const overrides: SafeFetchOverrides = {
+      resolvePublic: slowResolver,
+      skipPortValidation: true,
+    };
+    try {
+      await safeFetchWithOverrides('http://timeout-code.test/', overrides, { timeoutMs: 50 });
+      expect.fail('Should have thrown');
+    } catch (err: any) {
+      expect(err.code).toBe('safe_fetch_timeout');
+      expect(err.status).toBe(504);
+    }
+  }, 10_000);
+
+  it('normal fast request succeeds within deadline', async () => {
+    const port = await startFixtureServer((_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end('<html><body>Fast</body></html>');
+    });
+    const overrides = makeTestOverrides('fast.test', [{ address: '127.0.0.1', family: 4 }], port);
+    const result = await safeFetchWithOverrides('http://fast.test/', overrides, { timeoutMs: 5000 });
+    expect(result.body.toString()).toContain('Fast');
   });
 });
 
@@ -1270,40 +1353,70 @@ describe('Repository SSRF entry scan', () => {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 describe('Transport-level DNS pinning proof', () => {
-  it('requestPinned uses custom lookup that returns pinned IP', async () => {
-    installFakeDns();
-    setFakeDns('pinned.test', [{ address: '93.184.216.34', family: 4 }]);
-    try { await safeFetchWebsite('http://pinned.test'); } catch { /* expected */ }
-    expect(lookupCallCount).toBe(1);
+  it('DNS resolver is called exactly once per URL (no second lookup)', async () => {
+    let resolveCount = 0;
+    const port = await startFixtureServer((_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end('<html>OK</html>');
+    });
+    const resolver = async (hostname: string) => {
+      resolveCount++;
+      return ['127.0.0.1'];
+    };
+    const overrides: SafeFetchOverrides = {
+      resolvePublic: resolver,
+      transport: makeTestTransport(port),
+      skipPortValidation: true,
+    };
+    await safeFetchWithOverrides('http://pinned.test/', overrides);
+    expect(resolveCount).toBe(1);
   });
 
-  it('multiple addresses rotate through pinned lookup', async () => {
-    installFakeDns();
-    setFakeDns('multi.test', [
-      { address: '93.184.216.34', family: 4 },
-      { address: '93.184.216.35', family: 4 },
-    ]);
-    try { await safeFetchWebsite('http://multi.test'); } catch { /* expected */ }
-    expect(lookupCallCount).toBe(1);
+  it('DNS resolver is called on each redirect iteration (source verification)', async () => {
+    // The safeFetch for-loop calls resolvePublic(current.hostname, deadline) at the top
+    // of each iteration. current is updated by new URL(location, current) after a redirect.
+    // This means the resolver is called once per iteration: initial + each redirect = N calls.
+    const source = fs.readFileSync(path.join(gatewayRoot, 'src/services/safe-http-fetch.ts'), 'utf8');
+    // Verify resolvePublic is called with current.hostname (which changes per redirect)
+    expect(source).toContain('resolvePublic(current.hostname, deadline)');
+    // Verify the for-loop allows up to MAX_REDIRECTS iterations
+    expect(source).toContain('MAX_REDIRECTS');
   });
 
-  it('servername is set to original hostname for TLS', async () => {
-    installFakeDns();
-    setFakeDns('tls-host.test', [{ address: '93.184.216.34', family: 4 }]);
-    try { await safeFetchWebsite('https://tls-host.test'); } catch { /* expected */ }
-  });
-
-  it('Host header uses original hostname', async () => {
+  it('Host header uses original hostname (not resolved IP)', async () => {
     let receivedHost = '';
     const port = await startFixtureServer((req, res) => {
       receivedHost = req.headers.host || '';
       res.writeHead(200, { 'Content-Type': 'text/html' });
       res.end('<html/>');
     });
-    setFakeDns('host-verify.test', [{ address: '127.0.0.1', family: 4 }]);
-    try {
-      await safeFetchWebsite(`http://host-verify.test:${port}`);
-    } catch { /* port restriction */ }
+    const overrides = makeTestOverrides('host-verify.test', [{ address: '127.0.0.1', family: 4 }], port);
+    await safeFetchWithOverrides('http://host-verify.test/', overrides);
+    expect(receivedHost).toBe('host-verify.test');
+  });
+
+  it('production resolver rejects mixed public/private DNS results', async () => {
+    // This test verifies the production resolvePublic function behavior directly,
+    // since the injected resolver is the validation layer (it replaces resolvePublic).
+    // The production resolvePublic checks ALL addresses and returns [] if ANY is unsafe.
+    installFakeDns();
+    setFakeDns('mixed.test', [
+      { address: '93.184.216.34', family: 4 },
+      { address: '10.0.0.1', family: 4 },
+    ]);
+    await expect(safeFetchWebsite('http://mixed.test')).rejects.toMatchObject({ code: 'unsafe_url' });
+  });
+
+  it('DNS timeout causes safe_fetch_timeout', async () => {
+    const resolver = async (_hostname: string) => {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      return ['127.0.0.1'];
+    };
+    const overrides: SafeFetchOverrides = {
+      resolvePublic: resolver,
+      skipPortValidation: true,
+    };
+    await expect(safeFetchWithOverrides('http://dns-timeout.test/', overrides, { timeoutMs: 50 })).rejects.toMatchObject({ code: 'safe_fetch_timeout' });
   });
 });
 
