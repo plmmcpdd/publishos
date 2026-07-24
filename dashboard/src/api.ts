@@ -240,10 +240,10 @@ export async function deleteClient(id: string): Promise<void> {
   await request(`/client/${id}`, { method: 'DELETE' });
 }
 
-export async function uploadVideo(file: File): Promise<{ url: string; filename: string; size: number }> {
+export async function uploadVideo(file: File): Promise<{ storage_key: string; url: string; filename: string; size: number }> {
   const body = new FormData();
   body.append('video', file);
-  const data = await request<{ success: boolean; data: { url: string; filename: string; size: number } }>('/upload/video', {
+  const data = await request<{ success: boolean; data: { storage_key: string; url: string; filename: string; size: number } }>('/upload/video', {
     method: 'POST',
     body,
   });

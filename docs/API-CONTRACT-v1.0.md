@@ -338,7 +338,7 @@ Headers: Authorization: Bearer {jwt_token}
       "account_binding_id": "bind_tiktok_joes_hvac",
       "title": "Summer HVAC Tune-Up Tips",
       "description": "Keep your AC running...",
-      "media_url": "https://s3.amazonaws.com/.../video.mp4?X-Amz-Signature=...&X-Amz-Expires=900",
+      "media_url": "https://api.example.com/v1/media?key=local%3Avideos%2F...&exp=...&aud=...&sig=...",
       "media_type": "video",
       "platform": "tiktok",
       "ai_label_required": "ai-generated",
@@ -355,7 +355,7 @@ Headers: Authorization: Bearer {jwt_token}
 }
 ```
 
-**Note:** `media_url` 是 S3 预签名 URL，15 分钟后过期。客户端必须在有效期内下载。
+**Note:** `media_url` 是服务端签发的短时媒体 URL，默认 15 分钟后过期。数据库保存稳定 storage key（例如 `local:videos/<uuid>.mp4`），而非短时 URL；客户端必须在有效期内下载。
 
 ---
 
@@ -597,4 +597,3 @@ Headers: Authorization: Bearer {jwt_token}
 |---------|------|---------|
 | 0.1 | 2026-06-04 | Initial draft |
 | 1.0 | 2026-06-04 | Added 4 security patches: account_binding_id, device/task token separation, approval gateway, S3 presigned URLs |
-

@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
 import bcrypt from 'bcryptjs';
 import { closeSync, mkdtempSync, openSync, rmSync } from 'node:fs';
@@ -74,11 +74,19 @@ beforeEach(() => {
   vi.useFakeTimers();
 });
 
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
+
 afterAll(async () => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
-  await prisma?.$disconnect();
-  rmSync(testDirectory, { recursive: true, force: true });
+  try {
+    await prisma?.$disconnect();
+  } finally {
+    rmSync(testDirectory, { recursive: true, force: true });
+  }
 });
 
 describe('Phase 1B server publisher', () => {

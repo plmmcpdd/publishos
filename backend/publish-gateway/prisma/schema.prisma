@@ -15,83 +15,101 @@ model Admin {
 }
 
 model Client {
-  id              String           @id @default(cuid())
-  name            String
-  industry        String?
-  active          Boolean          @default(true)
-  email           String           @unique
-  password        String
-  createdAt       DateTime         @default(now())
-  updatedAt       DateTime         @updatedAt
-  accountBindings AccountBinding[]
-  contents        Content[]
-  performanceMetrics PerformanceMetrics[]
+  id                       String                    @id @default(cuid())
+  name                     String
+  industry                 String?
+  active                   Boolean                   @default(true)
+  email                    String                    @unique
+  password                 String
+  createdAt                DateTime                  @default(now())
+  updatedAt                DateTime                  @updatedAt
+  accountBindings          AccountBinding[]
+  contents                 Content[]
+  performanceMetrics       PerformanceMetrics[]
+  oauthAuthorizationStates OAuthAuthorizationState[]
+}
+
+model OAuthAuthorizationState {
+  id          String    @id @default(cuid())
+  provider    String
+  stateHash   String    @unique
+  clientId    String
+  client      Client    @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  flow        String
+  redirectUri String
+  actorId     String?
+  createdAt   DateTime  @default(now())
+  expiresAt   DateTime
+  consumedAt  DateTime?
+
+  @@index([provider, flow, expiresAt])
+  @@index([clientId, expiresAt])
 }
 
 model AccountBinding {
-  id                String       @id @default(cuid())
-  clientId          String
-  client            Client       @relation(fields: [clientId], references: [id])
-  platform          String       // tiktok, instagram, facebook, x, youtube
-  accountUsername   String
-  platformUserId    String?
-  username          String?
-  accessToken       String?
-  refreshToken      String?
-  expiresAt         DateTime?
-  scope             String?
-  status            String       @default("active")
-  businessLocation  String?      // JSON string: { country, state, city }
-  active            Boolean      @default(true)
-  createdAt         DateTime     @default(now())
-  updatedAt         DateTime     @updatedAt
-  publishJobs       PublishJob[]
-  
+  id               String       @id @default(cuid())
+  clientId         String
+  client           Client       @relation(fields: [clientId], references: [id])
+  platform         String // tiktok, instagram, facebook, x, youtube
+  accountUsername  String
+  platformUserId   String?
+  username         String?
+  accessToken      String?
+  refreshToken     String?
+  expiresAt        DateTime?
+  scope            String?
+  status           String       @default("active")
+  businessLocation String? // JSON string: { country, state, city }
+  active           Boolean      @default(true)
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+  publishJobs      PublishJob[]
+
   @@unique([clientId, platform, accountUsername])
 }
 
 model Content {
-  id                String          @id @default(cuid())
-  clientId          String
-  client            Client          @relation(fields: [clientId], references: [id])
-  title             String
-  description       String
-  caption           String?
-  hashtags          String          @default("")
-  videoUrl          String          // S3 key or presigned URL
-  thumbnailUrl      String?
-  aiGenerated       Boolean         @default(false)
-  aiTools           String          @default("")
-  platforms         String          // JSON string: target platforms
-  scheduleAt        DateTime?
-  publishedAt       DateTime?
-  status            ContentStatus   @default(pending_review)
-  metadata          String?         // JSON string: { industry, campaign, content_type }
-  createdAt         DateTime        @default(now())
-  updatedAt         DateTime        @updatedAt
-  assets            ContentAsset[]
-  publishJobs       PublishJob[]
-  complianceResults String?         // JSON string: { copyright, ai_disclosure, platform_policy }
-  licenseCheckPassed Boolean        @default(false)
-  licenseCheckedAt   DateTime?
-  bannedWordsPassed  Boolean        @default(false)
-  bannedWordsCheckedAt DateTime?
-  aiDisclosureConfirmed Boolean     @default(false)
+  id                      String               @id @default(cuid())
+  clientId                String
+  client                  Client               @relation(fields: [clientId], references: [id])
+  title                   String
+  description             String
+  caption                 String?
+  hashtags                String               @default("")
+  videoUrl                String // S3 key or presigned URL
+  thumbnailUrl            String?
+  aiGenerated             Boolean              @default(false)
+  aiTools                 String               @default("")
+  platforms               String // JSON string: target platforms
+  scheduleAt              DateTime?
+  publishedAt             DateTime?
+  status                  ContentStatus        @default(pending_review)
+  metadata                String? // JSON string: { industry, campaign, content_type }
+  createdAt               DateTime             @default(now())
+  updatedAt               DateTime             @updatedAt
+  assets                  ContentAsset[]
+  publishJobs             PublishJob[]
+  complianceResults       String? // JSON string: { copyright, ai_disclosure, platform_policy }
+  licenseCheckPassed      Boolean              @default(false)
+  licenseCheckedAt        DateTime?
+  bannedWordsPassed       Boolean              @default(false)
+  bannedWordsCheckedAt    DateTime?
+  aiDisclosureConfirmed   Boolean              @default(false)
   aiDisclosureConfirmedAt DateTime?
-  publishLogs       PublishLog[]
-  performanceMetrics PerformanceMetrics[]
+  publishLogs             PublishLog[]
+  performanceMetrics      PerformanceMetrics[]
 }
 
 model ContentAsset {
-  id            String  @id @default(cuid())
-  contentId     String
-  content       Content @relation(fields: [contentId], references: [id], onDelete: Cascade)
-  type          String  // stock_video, client_owned, ai_generated, music
-  source        String? // envato, artgrid, client_direct, runway, etc.
-  licenseId     String?
-  url           String
+  id                  String  @id @default(cuid())
+  contentId           String
+  content             Content @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  type                String // stock_video, client_owned, ai_generated, music
+  source              String? // envato, artgrid, client_direct, runway, etc.
+  licenseId           String?
+  url                 String
   authorizationDocUrl String?
-  description   String?
+  description         String?
 }
 
 enum ContentStatus {
@@ -116,19 +134,19 @@ enum JobStatus {
 }
 
 model PublishJob {
-  id                  String         @id @default(cuid())
+  id                  String               @id @default(cuid())
   contentId           String
-  content             Content        @relation(fields: [contentId], references: [id])
+  content             Content              @relation(fields: [contentId], references: [id])
   accountBindingId    String
-  accountBinding      AccountBinding @relation(fields: [accountBindingId], references: [id])
+  accountBinding      AccountBinding       @relation(fields: [accountBindingId], references: [id])
   platform            String
-  status              JobStatus      @default(pending)
+  status              JobStatus            @default(pending)
   scheduleAt          DateTime?
-  publishOptions      String?        // JSON string: platform-specific options
-  clientToken         String?        // short-lived token for client app
-  jobToken            String?        // one-time token for status callback
-  activeKey           String?        @unique
-  taskTokenJti        String?        @unique
+  publishOptions      String? // JSON string: platform-specific options
+  clientToken         String? // short-lived token for client app
+  jobToken            String? // one-time token for status callback
+  activeKey           String?              @unique
+  taskTokenJti        String?              @unique
   taskTokenExpiresAt  DateTime?
   taskTokenConsumedAt DateTime?
   taskDeviceId        String?
@@ -140,39 +158,39 @@ model PublishJob {
   errorCode           String?
   errorDetail         String?
   errorMessage        String?
-  retryable           Boolean         @default(false)
-  retryCount          Int             @default(0)
+  retryable           Boolean              @default(false)
+  retryCount          Int                  @default(0)
   deviceFingerprint   String?
   screenshotUrl       String?
-  createdAt           DateTime       @default(now())
-  updatedAt           DateTime       @updatedAt
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
   history             JobHistory[]
   performanceMetrics  PerformanceMetrics[]
 }
 
 model PerformanceMetrics {
-  id              String     @id @default(cuid())
-  clientId        String
-  client          Client     @relation(fields: [clientId], references: [id])
-  contentId       String
-  content         Content    @relation(fields: [contentId], references: [id])
-  publishJobId    String
-  publishJob      PublishJob @relation(fields: [publishJobId], references: [id], onDelete: Cascade)
-  platform        String
-  platformPostId  String
-  views           Int        @default(0)
-  likes           Int        @default(0)
-  comments        Int        @default(0)
-  shares          Int        @default(0)
-  saves           Int        @default(0)
-  reach           Int        @default(0)
-  impressions     Int        @default(0)
-  engagementRate  Float      @default(0)
-  completionRate  Float?
-  collectedAt     DateTime   @default(now())
-  metricDate      String
-  period          String     @default("daily")
-  createdAt       DateTime   @default(now())
+  id             String     @id @default(cuid())
+  clientId       String
+  client         Client     @relation(fields: [clientId], references: [id])
+  contentId      String
+  content        Content    @relation(fields: [contentId], references: [id])
+  publishJobId   String
+  publishJob     PublishJob @relation(fields: [publishJobId], references: [id], onDelete: Cascade)
+  platform       String
+  platformPostId String
+  views          Int        @default(0)
+  likes          Int        @default(0)
+  comments       Int        @default(0)
+  shares         Int        @default(0)
+  saves          Int        @default(0)
+  reach          Int        @default(0)
+  impressions    Int        @default(0)
+  engagementRate Float      @default(0)
+  completionRate Float?
+  collectedAt    DateTime   @default(now())
+  metricDate     String
+  period         String     @default("daily")
+  createdAt      DateTime   @default(now())
 
   @@unique([publishJobId, period, metricDate])
   @@index([clientId, collectedAt])
@@ -182,30 +200,30 @@ model PerformanceMetrics {
 }
 
 model JobHistory {
-  id          String     @id @default(cuid())
-  jobId       String
-  job         PublishJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
-  status      String
-  changedAt   DateTime   @default(now())
-  changedBy   String?    // user_id or system
-  notes       String?
+  id        String     @id @default(cuid())
+  jobId     String
+  job       PublishJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  status    String
+  changedAt DateTime   @default(now())
+  changedBy String? // user_id or system
+  notes     String?
 }
 
 model Device {
-  id          String   @id @default(cuid())
-  deviceId    String   @unique // hardware-bound device identifier from client app
-  clientId    String?
-  lastSeen    DateTime @default(now())
-  online      Boolean  @default(false)
-  capabilities String  @default("") // JSON string: tiktok_web, instagram_web, etc.
-  token       String   @unique // device_token for queue polling
-  createdAt   DateTime @default(now())
+  id           String   @id @default(cuid())
+  deviceId     String   @unique // hardware-bound device identifier from client app
+  clientId     String?
+  lastSeen     DateTime @default(now())
+  online       Boolean  @default(false)
+  capabilities String   @default("") // JSON string: tiktok_web, instagram_web, etc.
+  token        String   @unique // device_token for queue polling
+  createdAt    DateTime @default(now())
 }
 
 model PublishLog {
-  id                      String   @id @default(cuid())
+  id                      String    @id @default(cuid())
   contentId               String
-  content                 Content  @relation(fields: [contentId], references: [id])
+  content                 Content   @relation(fields: [contentId], references: [id])
   contentTitle            String
   userId                  String
   userEmail               String
@@ -226,7 +244,7 @@ model PublishLog {
   userAgent               String?
   deviceId                String?
   sessionId               String?
-  timestamp               DateTime @default(now())
+  timestamp               DateTime  @default(now())
 
   @@index([contentId])
   @@index([userId])
@@ -235,39 +253,39 @@ model PublishLog {
 }
 
 model AuditLog {
-  id          String   @id @default(cuid())
-  action      String   // create_content, approve_content, publish_job, etc.
-  actorId     String?  // who did it
-  actorType   String   // user, system, client_app
-  targetType  String   // content, publish_job, account
-  targetId    String
-  details     String?
-  deviceId    String?
-  ipAddress   String?
-  createdAt   DateTime @default(now())
+  id         String   @id @default(cuid())
+  action     String // create_content, approve_content, publish_job, etc.
+  actorId    String? // who did it
+  actorType  String // user, system, client_app
+  targetType String // content, publish_job, account
+  targetId   String
+  details    String?
+  deviceId   String?
+  ipAddress  String?
+  createdAt  DateTime @default(now())
 }
 
 // ---- GEO Diagnostic System ----
 
 model Ticket {
-  id            String   @id @default(cuid())
-  companyName   String
-  address       String
-  website       String?
-  industry      String
-  phone         String?
-  painPoints    String?
-  status        String   @default("pending") // pending → diagnosing → completed → delivered
-  priority      String   @default("normal")
-  assignedTo    String?
-  contactName   String?
-  contactEmail  String?
-  contactPhone  String?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id           String   @id @default(cuid())
+  companyName  String
+  address      String
+  website      String?
+  industry     String
+  phone        String?
+  painPoints   String?
+  status       String   @default("pending") // pending → diagnosing → completed → delivered
+  priority     String   @default("normal")
+  assignedTo   String?
+  contactName  String?
+  contactEmail String?
+  contactPhone String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
-  photos        TicketPhoto[]
-  diagnosis     DiagnosisReport?
+  photos    TicketPhoto[]
+  diagnosis DiagnosisReport?
 }
 
 model TicketPhoto {

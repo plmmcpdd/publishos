@@ -1,61 +1,56 @@
 import { Router } from 'express';
-import type { Request, Response } from 'express';
+import type { Request } from 'express';
 import multer from 'multer';
-import path from 'path';
 import fs from 'fs';
+import path from 'path';
+import crypto from 'crypto';
 import { authenticateToken, requireAdmin } from '../middleware/auth';
-import { sendInternalError } from '../middleware/errors';
+import { AppError } from '../middleware/errors';
+import { loadMediaConfig } from '../config/security';
+import { detectMedia, finalizeUploadedFile } from '../services/media-storage';
+import { signedMediaUrl } from '../services/media-signing';
+import { rateLimit } from '../middleware/http-security';
 
 const router = Router();
 
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => {
-    const dir = path.resolve(__dirname, '../../uploads/videos');
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    cb(null, dir);
-  },
-  filename: (_req, file, cb) => {
-    const ext = path.extname(file.originalname);
-    cb(null, `${Date.now()}-${Math.random().toString(36).slice(2, 11)}${ext}`);
-  },
-});
+function temporaryDirectory(): string {
+  const directory = path.join(loadMediaConfig().root, '.tmp');
+  fs.mkdirSync(directory, { recursive: true, mode: 0o750 });
+  return directory;
+}
 
 const upload = multer({
-  storage,
-  limits: { fileSize: 500 * 1024 * 1024 },
-  fileFilter: (_req, file, cb) => {
-    const allowedTypes = ['video/mp4', 'video/quicktime', 'video/x-msvideo', 'image/jpeg', 'image/png'];
-    if (allowedTypes.includes(file.mimetype)) cb(null, true);
-    else cb(new Error('File type not allowed'));
-  },
+  storage: multer.diskStorage({ destination: (_req, _file, cb) => cb(null, temporaryDirectory()), filename: (_req, _file, cb) => cb(null, `${crypto.randomUUID()}.upload`) }),
+  limits: { fileSize: Math.max(loadMediaConfig().videoMaxBytes, loadMediaConfig().imageMaxBytes) },
 });
 
-router.post('/upload/video', authenticateToken, requireAdmin, upload.single('video'), async (req: Request, res: Response) => {
-  try {
-    if (!req.file) {
-      res.status(400).json({ success: false, error: 'No file uploaded' });
-      return;
-    }
+function removeTemporary(file?: Express.Multer.File): void { if (file?.path) fs.rmSync(file.path, { force: true }); }
 
-    const url = `/uploads/videos/${req.file.filename}`;
-    res.json({ success: true, data: { url, filename: req.file.filename, size: req.file.size } });
-  } catch (error) {
-    sendInternalError(req, res);
-  }
-});
+function handleUpload(expected: 'video' | 'image', field: string) {
+  return [
+    (req: Request, res: any, next: any) => upload.single(field)(req, res, (error: unknown) => {
+      if (error instanceof multer.MulterError && error.code === 'LIMIT_FILE_SIZE') return next(new AppError(413, 'upload_too_large', 'Upload exceeds the permitted size'));
+      if (error) return next(new AppError(400, 'validation_error', 'Upload could not be processed'));
+      next();
+    }),
+    (req: Request, res: any, next: any) => {
+      try {
+        if (!req.file) throw new AppError(400, 'validation_error', 'No file uploaded');
+        const config = loadMediaConfig();
+        const limit = expected === 'video' ? config.videoMaxBytes : config.imageMaxBytes;
+        if (req.file.size > limit) throw new AppError(413, 'upload_too_large', 'Upload exceeds the permitted size');
+        const descriptor = fs.openSync(req.file.path, 'r');
+        const head = Buffer.alloc(32); const bytes = fs.readSync(descriptor, head, 0, head.length, 0); fs.closeSync(descriptor);
+        const detected = detectMedia(head.subarray(0, bytes));
+        if (!detected || detected.kind !== expected) throw new AppError(415, 'media_type_not_allowed', 'Uploaded file type is not allowed');
+        const saved = finalizeUploadedFile(req.file.path, detected);
+        const signed = signedMediaUrl(saved.storageKey);
+        res.status(201).json({ success: true, data: { storage_key: saved.storageKey, url: signed.url, preview_url: signed.url, expires_at: signed.expiresAt.toISOString(), filename: saved.filename, size: req.file.size, mime_type: detected.mimeType } });
+      } catch (error) { removeTemporary(req.file); next(error); }
+    },
+  ];
+}
 
-router.post('/upload/thumbnail', authenticateToken, requireAdmin, upload.single('thumbnail'), async (req: Request, res: Response) => {
-  try {
-    if (!req.file) {
-      res.status(400).json({ success: false, error: 'No file uploaded' });
-      return;
-    }
-
-    const url = `/uploads/videos/${req.file.filename}`;
-    res.json({ success: true, data: { url, filename: req.file.filename, size: req.file.size } });
-  } catch (error) {
-    sendInternalError(req, res);
-  }
-});
-
+router.post('/upload/video', authenticateToken, requireAdmin, rateLimit('upload', 30, 60 * 60_000), ...handleUpload('video', 'video'));
+router.post('/upload/thumbnail', authenticateToken, requireAdmin, rateLimit('upload', 30, 60 * 60_000), ...handleUpload('image', 'thumbnail'));
 export default router;

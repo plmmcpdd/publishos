@@ -1,6 +1,4 @@
 import express from 'express';
-import cors from 'cors';
-import path from 'path';
 import contentRoutes from './routes/content';
 import authRoutes from './routes/auth';
 import uploadRoutes from './routes/upload';
@@ -18,6 +16,9 @@ import { languageMiddleware } from './middleware/language';
 import { errorHandler, requestId } from './middleware/errors';
 import { initializeSecurityConfig } from './config/security';
 import { authenticateToken, requireAdmin } from './middleware/auth';
+import mediaRoutes from './routes/media';
+import { corsSecurity, rateLimit } from './middleware/http-security';
+import { loadHttpSecurityConfig } from './config/security';
 
 const deprecated = (_req: express.Request, res: express.Response, next: express.NextFunction) => {
   res.setHeader('Deprecation', 'true');
@@ -28,15 +29,17 @@ const deprecated = (_req: express.Request, res: express.Response, next: express.
 export function createApp() {
   initializeSecurityConfig();
   const app = express();
-  app.use(cors());
-  app.use(express.json());
   app.use(requestId);
+  app.set('trust proxy', loadHttpSecurityConfig().trustProxyHops || false);
+  app.use(corsSecurity());
+  app.use(express.json());
   app.use(languageMiddleware);
-  app.use('/uploads', express.static(path.resolve(__dirname, '../uploads')));
   app.get('/health', (_req, res) => res.json({ status: 'ok', version: '0.1.0' }));
-  app.use('/v1/auth', authRoutes);
+  app.use('/v1/auth', rateLimit('login', 10, 15 * 60_000), authRoutes);
+  app.use('/v1', mediaRoutes);
   app.use('/v1', tiktokRoutes);
   app.use('/v1', uploadRoutes);
+  app.use('/v1', rateLimit('general', 300, 15 * 60_000));
   app.use('/v1/content', contentRoutes);
   app.use('/v1/publish-jobs', publishJobRoutes);
   app.use('/v1/client', clientRoutes);
@@ -45,7 +48,7 @@ export function createApp() {
   app.use('/v1/stats', statsRoutes);
   app.use('/v1', metricsRoutes);
   app.use('/v1/audit-logs', auditLogRoutes);
-  app.use('/v1', authenticateToken, requireAdmin, ticketRoutes);
+  app.use('/v1', authenticateToken, requireAdmin, rateLimit('ticket', 10, 60 * 60_000), ticketRoutes);
   app.use('/api/v1', deprecated);
   app.use('/api/v1/contents', apiContentRoutes);
   app.use('/api/v1/stats', statsRoutes);

@@ -78,7 +78,13 @@ beforeAll(async () => {
   clientBToken = (await request(app).post('/v1/auth/login').send({ email: clientB.email, password: 'test-password' })).body.data.token;
 }, 30_000);
 
-afterAll(async () => { await prisma?.$disconnect(); rmSync(testDirectory, { recursive: true, force: true }); });
+afterAll(async () => {
+  try {
+    await prisma?.$disconnect();
+  } finally {
+    rmSync(testDirectory, { recursive: true, force: true });
+  }
+});
 
 describe('Phase 1A authentication and tenant isolation', () => {
   it('fails closed for missing or short secrets', async () => {

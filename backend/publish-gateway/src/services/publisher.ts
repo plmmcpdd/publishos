@@ -1,5 +1,7 @@
 import { prisma } from '../lib/prisma';
 import { activeJobStatuses, isTerminalJob, transitionContent, transitionJob } from '../domain/publishing-state';
+import fs from 'fs';
+import { localPathForStorageKey, normalizeLocalStorageKey } from './media-storage';
 
 const TIKTOK_CLIENT_KEY = process.env.TIKTOK_CLIENT_KEY || '';
 const TIKTOK_CLIENT_SECRET = process.env.TIKTOK_CLIENT_SECRET || '';
@@ -74,16 +76,12 @@ export async function publishToTikTok(jobId: string): Promise<void> {
     });
 
     const accessToken = await getValidAccessToken(job.accountBinding);
-    const videoUrl = resolvePublicMediaUrl(job.content.videoUrl);
-
-    console.log(`[publish] jobId=${jobId} videoUrl=${videoUrl}`);
-
-    // Step 1: Download video from our server
-    const videoRes = await fetch(videoUrl);
-    if (!videoRes.ok) {
-      throw new Error(`Failed to download video from ${videoUrl}: ${videoRes.status}`);
-    }
-    const videoBuffer = Buffer.from(await videoRes.arrayBuffer());
+    const localKey = normalizeLocalStorageKey(job.content.videoUrl);
+    const videoUrl = localKey ? undefined : resolvePublicMediaUrl(job.content.videoUrl);
+    // Local media stays on disk; legacy/external references retain their existing fetch path.
+    const videoBuffer = localKey
+      ? fs.readFileSync(localPathForStorageKey(localKey))
+      : await (async () => { const response = await fetch(videoUrl!); if (!response.ok) throw new Error(`Failed to download video from ${videoUrl}: ${response.status}`); return Buffer.from(await response.arrayBuffer()); })();
     const videoSize = videoBuffer.length;
     console.log(`[publish] Downloaded video: ${videoSize} bytes`);
 

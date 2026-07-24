@@ -5,8 +5,7 @@ import { issueToken } from './auth';
 import { authenticateToken, clientIdFromAuth, requireAdmin, requireClient, requireDevice } from '../middleware/auth';
 import { AppError, sendInternalError } from '../middleware/errors';
 import { transitionJob } from '../domain/publishing-state';
-
-const PRESIGN_EXPIRY_SECONDS = 900; // 15 minutes
+import { signedMediaUrl } from '../services/media-signing';
 
 const router = Router();
 
@@ -45,13 +44,6 @@ router.post('/', authenticateToken, requireAdmin, async (req, res) => {
     sendInternalError(req, res);
   }
 });
-
-// Helper: generate presigned S3 URL (mock - replace with real S3 SDK)
-function generatePresignedUrl(s3Key: string): string {
-  // TODO: Replace with actual AWS SDK getSignedUrl
-  const bucket = process.env.S3_BUCKET || 'publish-gateway-assets';
-  return `https://${bucket}.s3.amazonaws.com/${s3Key}?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Expires=${PRESIGN_EXPIRY_SECONDS}&X-Amz-SignedHeaders=host`;
-}
 
 // GET /client/list - list all active clients (for client app selection)
 router.get('/list', authenticateToken, requireAdmin, async (_req, res) => {
@@ -164,8 +156,8 @@ router.get('/queue', authenticateToken, requireDevice, async (req, res) => {
       title: job.content.title,
       description: job.content.description,
       caption: job.content.caption,
-      media_url: generatePresignedUrl(job.content.videoUrl),
-      thumbnail_url: job.content.thumbnailUrl ? generatePresignedUrl(job.content.thumbnailUrl) : undefined,
+      media_url: signedMediaUrl(job.content.videoUrl, `device:${deviceId}:job:${job.id}`).url,
+      thumbnail_url: job.content.thumbnailUrl ? signedMediaUrl(job.content.thumbnailUrl, `device:${deviceId}:job:${job.id}`).url : undefined,
       platform: job.platform,
       publish_config: {
         ai_generated_label: job.content.aiGenerated,
