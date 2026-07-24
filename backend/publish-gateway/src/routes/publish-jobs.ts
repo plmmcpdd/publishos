@@ -2,6 +2,8 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma';
 import { authenticateToken, requireAdmin } from '../middleware/auth';
+import { AppError } from '../middleware/errors';
+import { createOrGetActivePublishJob, transitionJob } from '../domain/publishing-state';
 
 const router = Router();
 
@@ -13,7 +15,7 @@ const createJobSchema = z.object({
   publish_options: z.record(z.any()).optional(),
 });
 
-// POST /publish-jobs - create a publish job for approved content
+// POST /publish-jobs - create a publish job for delivered content
 router.post('/', authenticateToken, requireAdmin, async (req, res) => {
   const parse = createJobSchema.safeParse(req.body);
   if (!parse.success) {
@@ -23,7 +25,7 @@ router.post('/', authenticateToken, requireAdmin, async (req, res) => {
 
   const data = parse.data;
 
-  // Validate content is approved
+  // A publication task may only be created after the separate delivery action.
   const content = await prisma.content.findUnique({
     where: { id: data.content_id }
   });
@@ -33,11 +35,6 @@ router.post('/', authenticateToken, requireAdmin, async (req, res) => {
     return;
   }
   
-  if (content.status !== 'approved') {
-    res.status(422).json({ error: 'Content must be approved before creating publish jobs' });
-    return;
-  }
-
   // Validate account binding
   const binding = await prisma.accountBinding.findUnique({
     where: { id: data.account_binding_id }
@@ -57,54 +54,24 @@ router.post('/', authenticateToken, requireAdmin, async (req, res) => {
     return;
   }
 
-  const job = await prisma.publishJob.create({
-    data: {
-      contentId: data.content_id,
-      accountBindingId: data.account_binding_id,
-      platform: data.platform,
-      scheduleAt: data.schedule_at ? new Date(data.schedule_at) : null,
-      publishOptions: JSON.stringify(data.publish_options || {}),
-      status: 'pending',
-    },
-    include: { content: true, accountBinding: true }
-  });
+  const scheduleAt = data.schedule_at ? new Date(data.schedule_at) : null;
+  const { job, created } = await prisma.$transaction((tx) => createOrGetActivePublishJob(tx, {
+    contentId: data.content_id, accountBindingId: data.account_binding_id, platform: data.platform, scheduleAt,
+    publishOptions: JSON.stringify(data.publish_options || {}), dispatchWhenImmediate: true,
+    changedBy: req.auth!.sub,
+    auditOnCreate: (jobId) => ({
+      action: 'create_publish_job', actorId: req.auth!.sub, actorType: 'user', targetType: 'publish_job', targetId: jobId,
+      details: JSON.stringify({ content_id: data.content_id, platform: data.platform }),
+    }),
+  }));
 
-  // Auto-dispatch if schedule is immediate (or within 5 min)
-  if (!data.schedule_at || new Date(data.schedule_at).getTime() - Date.now() < 5 * 60000) {
-    await prisma.publishJob.update({
-      where: { id: job.id },
-      data: { status: 'dispatched' }
-    });
-    job.status = 'dispatched';
-  }
-
-  await prisma.jobHistory.create({
-    data: {
-      jobId: job.id,
-      status: job.status,
-      changedBy: req.auth!.sub,
-      notes: 'Job created'
-    }
-  });
-
-  await prisma.auditLog.create({
-    data: {
-      action: 'create_publish_job',
-      actorId: req.auth!.sub,
-      actorType: 'user',
-      targetType: 'publish_job',
-      targetId: job.id,
-      details: JSON.stringify({ content_id: data.content_id, platform: data.platform })
-    }
-  });
-
-  res.status(201).json({
+  res.status(created ? 201 : 200).json({
     job_id: job.id,
     status: job.status,
     content_id: job.contentId,
     platform: job.platform,
     account_binding_id: job.accountBindingId,
-    created_at: job.createdAt,
+    created_at: job.createdAt, idempotent: !created,
   });
 });
 
@@ -138,14 +105,9 @@ router.post('/:id/cancel', authenticateToken, requireAdmin, async (req, res) => 
     return;
   }
   
-  if (['published', 'failed'].includes(job.status)) {
-    res.status(422).json({ error: 'Cannot cancel job that is already completed or failed' });
-    return;
-  }
-
-  const updated = await prisma.publishJob.update({
-    where: { id: req.params.id as string },
-    data: { status: 'cancelled' }
+  const updated = await prisma.$transaction(async (tx) => {
+    await transitionJob(tx, job.id, ['pending', 'dispatched', 'client_confirmed'], 'cancelled');
+    return tx.publishJob.findUniqueOrThrow({ where: { id: job.id } });
   });
 
   await prisma.jobHistory.create({

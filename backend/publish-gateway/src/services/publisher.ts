@@ -1,4 +1,5 @@
 import { prisma } from '../lib/prisma';
+import { activeJobStatuses, isTerminalJob, transitionContent, transitionJob } from '../domain/publishing-state';
 
 const TIKTOK_CLIENT_KEY = process.env.TIKTOK_CLIENT_KEY || '';
 const TIKTOK_CLIENT_SECRET = process.env.TIKTOK_CLIENT_SECRET || '';
@@ -67,9 +68,9 @@ export async function publishToTikTok(jobId: string): Promise<void> {
       throw new Error('TikTok credentials are not configured on server');
     }
 
-    await prisma.publishJob.update({
-      where: { id: jobId },
-      data: { status: 'uploading', errorMessage: null, errorDetail: null },
+    await prisma.$transaction(async (tx) => {
+      await transitionJob(tx, jobId, 'pending', 'uploading', { errorMessage: null, errorDetail: null });
+      await tx.jobHistory.create({ data: { jobId, status: 'uploading', changedBy: 'publisher', notes: 'Server publisher started' } });
     });
 
     const accessToken = await getValidAccessToken(job.accountBinding);
@@ -144,9 +145,9 @@ export async function publishToTikTok(jobId: string): Promise<void> {
       throw new Error(`TikTok upload failed (${uploadRes.status}): ${uploadText.slice(0, 200)}`);
     }
 
-    await prisma.publishJob.update({
-      where: { id: jobId },
-      data: { publishId, status: 'publishing' },
+    await prisma.$transaction(async (tx) => {
+      await transitionJob(tx, jobId, 'uploading', 'publishing', { publishId });
+      await tx.jobHistory.create({ data: { jobId, status: 'publishing', changedBy: 'publisher', notes: 'TikTok upload complete' } });
     });
 
     console.log(`[publish] publishId=${publishId}, polling status...`);
@@ -154,20 +155,19 @@ export async function publishToTikTok(jobId: string): Promise<void> {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`[publish] jobId=${jobId} FAILED:`, message);
-    await prisma.publishJob.update({
-      where: { id: jobId },
-      data: {
-        status: 'failed',
-        failedAt: new Date(),
-        errorMessage: message,
-        errorDetail: message,
-        retryCount: { increment: 1 },
-      },
-    });
-    await prisma.content.update({
-      where: { id: job.contentId },
-      data: { status: 'failed' },
-    });
+    try {
+      await prisma.$transaction(async (tx) => {
+        const current = await tx.publishJob.findUnique({ where: { id: jobId }, select: { status: true } });
+        if (!current || isTerminalJob(current.status)) return;
+        await transitionJob(tx, jobId, activeJobStatuses, 'failed', { failedAt: new Date(), errorMessage: message, errorDetail: message, retryCount: { increment: 1 } });
+        await transitionContent(tx, job.contentId, 'delivered', 'failed');
+        await tx.jobHistory.create({ data: { jobId, status: 'failed', changedBy: 'publisher', notes: 'Server publisher failed' } });
+      });
+    } catch (failureError) {
+      const current = await prisma.publishJob.findUnique({ where: { id: jobId }, select: { status: true } });
+      if (current && isTerminalJob(current.status)) return;
+      throw failureError;
+    }
   }
 }
 
@@ -193,19 +193,10 @@ async function pollPublishStatus(jobId: string, contentId: string, publishId: st
     const status = statusData.data?.status;
     if (status === 'PUBLISH_COMPLETE') {
       const publishedAt = new Date();
-      await prisma.publishJob.update({
-        where: { id: jobId },
-        data: {
-          status: 'published',
-          publishedAt,
-          platformPostId: publishId,
-          errorMessage: null,
-          errorDetail: null,
-        },
-      });
-      await prisma.content.update({
-        where: { id: contentId },
-        data: { status: 'published', publishedAt },
+      await prisma.$transaction(async (tx) => {
+        await transitionJob(tx, jobId, 'publishing', 'published', { publishedAt, platformPostId: publishId, errorMessage: null, errorDetail: null });
+        await transitionContent(tx, contentId, 'delivered', 'published', { publishedAt });
+        await tx.jobHistory.create({ data: { jobId, status: 'published', changedBy: 'publisher', notes: 'TikTok publish complete' } });
       });
       return;
     }

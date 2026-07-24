@@ -4,6 +4,7 @@ import { prisma } from '../lib/prisma';
 import { issueToken } from './auth';
 import { authenticateToken, clientIdFromAuth, requireAdmin, requireClient, requireDevice } from '../middleware/auth';
 import { AppError, sendInternalError } from '../middleware/errors';
+import { transitionJob } from '../domain/publishing-state';
 
 const PRESIGN_EXPIRY_SECONDS = 900; // 15 minutes
 
@@ -110,7 +111,10 @@ router.get('/queue', authenticateToken, requireDevice, async (req, res) => {
   // Find jobs for this client's active account bindings
   const jobs = await prisma.publishJob.findMany({
     where: {
-      status: 'dispatched',
+      OR: [
+        { status: 'dispatched' },
+        { status: 'client_confirmed', taskTokenConsumedAt: null, taskTokenExpiresAt: { lt: new Date() } },
+      ],
       accountBinding: {
         clientId,
         active: true,
@@ -129,13 +133,29 @@ router.get('/queue', authenticateToken, requireDevice, async (req, res) => {
 
   // Generate presigned URLs and task tokens
   const queue = await Promise.all(jobs.map(async (job) => {
-    // Generate one-time task token for this job
     const taskToken = issueToken({ tokenType: 'task', sub: job.id, jobId: job.id, deviceId, clientId, role: 'task' }, '24h');
-
-    await prisma.publishJob.update({
-      where: { id: job.id },
-      data: { jobToken: taskToken, clientToken: req.headers.authorization?.slice(7) }
+    const decoded = JSON.parse(Buffer.from(taskToken.split('.')[1], 'base64url').toString('utf8')) as { jti: string; exp: number };
+    const claimed = await prisma.$transaction(async (tx) => {
+      const current = await tx.publishJob.findUnique({ where: { id: job.id } });
+      if (!current) return false;
+      const tokenData = {
+        taskTokenJti: decoded.jti,
+        taskTokenExpiresAt: new Date(decoded.exp * 1000),
+        taskTokenConsumedAt: null,
+        taskDeviceId: deviceId,
+        jobToken: null,
+        clientToken: null,
+      };
+      if (current.status === 'dispatched') {
+        await transitionJob(tx, job.id, 'dispatched', 'client_confirmed', tokenData);
+      } else if (current.status === 'client_confirmed' && !current.taskTokenConsumedAt && current.taskTokenExpiresAt && current.taskTokenExpiresAt < new Date()) {
+        const updated = await tx.publishJob.updateMany({ where: { id: job.id, status: 'client_confirmed', taskTokenConsumedAt: null, taskTokenExpiresAt: { lt: new Date() } }, data: tokenData });
+        if (updated.count !== 1) return false;
+      } else return false;
+      await tx.jobHistory.create({ data: { jobId: job.id, status: 'client_confirmed', changedBy: deviceId, notes: current.status === 'dispatched' ? 'Task claimed by device' : 'Expired task token reissued' } });
+      return true;
     });
+    if (!claimed) return null;
 
     return {
       job_id: job.id,
@@ -160,7 +180,7 @@ router.get('/queue', authenticateToken, requireDevice, async (req, res) => {
     };
   }));
 
-  res.json({ device_id: deviceId, queue });
+  res.json({ device_id: deviceId, queue: queue.filter(Boolean) });
 });
 
 // POST /client/heartbeat

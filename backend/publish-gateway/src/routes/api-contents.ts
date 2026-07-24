@@ -1,6 +1,9 @@
 import { Router } from 'express';
 import { prisma } from '../lib/prisma';
 import { authenticateToken, clientIdFromAuth, requireAdmin } from '../middleware/auth';
+import { AppError } from '../middleware/errors';
+import { createOrGetActivePublishJob, transitionContent } from '../domain/publishing-state';
+import { publishToTikTok } from '../services/publisher';
 
 const router = Router();
 
@@ -59,33 +62,40 @@ router.get('/', authenticateToken, async (req, res) => {
 
 router.post('/:id/publish', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const content = await prisma.content.update({
-      where: { id: String(req.params.id) },
-      data: { status: 'published' },
+    const id = String(req.params.id);
+    const content = await prisma.content.findUnique({ where: { id } });
+    if (!content) throw new AppError(404, 'not_found', 'Content not found');
+    const binding = await prisma.accountBinding.findFirst({
+      where: { clientId: content.clientId, platform: 'tiktok', active: true, status: 'active', accessToken: { not: null } },
+      orderBy: { updatedAt: 'desc' },
     });
+    if (!binding) throw new AppError(409, 'invalid_state_transition', 'Content requires an active TikTok account binding');
+    const { job, created } = await prisma.$transaction((tx) => createOrGetActivePublishJob(tx, {
+      contentId: content.id, accountBindingId: binding.id, platform: 'tiktok', dispatchWhenImmediate: false,
+      changedBy: req.auth!.sub, createdNotes: 'Server publishing requested by legacy API',
+      auditOnCreate: (jobId) => ({
+        action: 'publish_requested', actorId: req.auth!.sub, actorType: 'user', targetType: 'content', targetId: content.id,
+        details: JSON.stringify({ jobId, bindingId: binding.id, source: 'legacy' }),
+      }),
+    }));
 
-    await prisma.auditLog.create({
-      data: {
-        action: 'publish',
-        actorId: 'dashboard',
-        actorType: 'user',
-        targetType: 'content',
-        targetId: content.id,
-      },
-    });
+    if (created) {
+      publishToTikTok(job.id).catch((error) => console.error(`TikTok publish job ${job.id} failed`, error));
+    }
 
-    res.json({ data: serializeContent(content) });
-  } catch {
-    res.status(404).json({ error: res.locals.t('errors.contentNotFound') });
+    res.json({ data: { ...serializeContent(content), publishJobId: job.id, publishing: true, idempotent: !created } });
+  } catch (error) {
+    if (error instanceof AppError) throw error;
+    throw error;
   }
 });
 
 router.post('/:id/approve', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const content = await prisma.content.update({
-      where: { id: String(req.params.id) },
-      data: { status: 'approved' },
-    });
+    const id = String(req.params.id);
+    await prisma.$transaction((tx) => transitionContent(tx, id, ['draft', 'pending_review', 'rejected'], 'approved'));
+    const content = await prisma.content.findUnique({ where: { id } });
+    if (!content) throw new AppError(404, 'not_found', 'Content not found');
 
     await prisma.auditLog.create({
       data: {
@@ -98,17 +108,18 @@ router.post('/:id/approve', authenticateToken, requireAdmin, async (req, res) =>
     });
 
     res.json({ data: serializeContent(content) });
-  } catch {
-    res.status(404).json({ error: res.locals.t('errors.contentNotFound') });
+  } catch (error) {
+    if (error instanceof AppError) throw error;
+    throw error;
   }
 });
 
 router.post('/:id/reject', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const content = await prisma.content.update({
-      where: { id: String(req.params.id) },
-      data: { status: 'rejected' },
-    });
+    const id = String(req.params.id);
+    await prisma.$transaction((tx) => transitionContent(tx, id, ['draft', 'pending_review'], 'rejected'));
+    const content = await prisma.content.findUnique({ where: { id } });
+    if (!content) throw new AppError(404, 'not_found', 'Content not found');
 
     await prisma.auditLog.create({
       data: {
@@ -121,8 +132,9 @@ router.post('/:id/reject', authenticateToken, requireAdmin, async (req, res) => 
     });
 
     res.json({ data: serializeContent(content) });
-  } catch {
-    res.status(404).json({ error: res.locals.t('errors.contentNotFound') });
+  } catch (error) {
+    if (error instanceof AppError) throw error;
+    throw error;
   }
 });
 

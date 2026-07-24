@@ -1,100 +1,46 @@
 import { Router } from 'express';
+import { z } from 'zod';
 import { prisma } from '../lib/prisma';
 import { authenticateToken, requireAdmin, requireTask } from '../middleware/auth';
+import { AppError } from '../middleware/errors';
+import { activeJobStatuses, transitionContent, transitionJob } from '../domain/publishing-state';
 
 const router = Router();
-
-// POST /tasks/:id/status - client app reports publish result
-router.post('/:id/status', authenticateToken, requireTask, async (req, res) => {
-  const { status, platform_post_id, platform_post_url, published_at, error, device_fingerprint, screenshot_url } = req.body;
-  
-  const jobId = req.params.id as string;
-  const auth = req.auth;
-  if (!auth || auth.tokenType !== 'task') {
-    res.status(403).json({ error: 'Task token required' });
-    return;
-  }
-  const tokenJobId = auth.jobId;
-  
-  // Ensure task token matches the job
-  if (tokenJobId !== jobId) {
-    res.status(403).json({ error: 'Task token does not match job' });
-    return;
-  }
-  
-  const job = await prisma.publishJob.findUnique({ where: { id: jobId } });
-  if (!job) {
-    res.status(404).json({ error: 'Job not found' });
-    return;
-  }
-  
-  let updateData: any = {
-    status,
-    updatedAt: new Date(),
-  };
-  
-  if (status === 'published') {
-    updateData.platformPostId = platform_post_id;
-    updateData.platformPostUrl = platform_post_url;
-    updateData.publishedAt = published_at ? new Date(published_at) : new Date();
-    updateData.deviceFingerprint = device_fingerprint;
-    updateData.screenshotUrl = screenshot_url;
-    
-    // Update content status too
-    await prisma.content.update({
-      where: { id: job.contentId },
-      data: { status: 'published' }
-    });
-  } else if (status === 'failed') {
-    updateData.errorCode = error?.code;
-    updateData.errorDetail = error?.message;
-    updateData.failedAt = new Date();
-    updateData.retryable = error?.retryable ?? false;
-    updateData.deviceFingerprint = device_fingerprint;
-  }
-  
-  const updated = await prisma.publishJob.update({
-    where: { id: jobId },
-    data: updateData,
-    include: { content: true, accountBinding: true }
-  });
-  
-  // Record history
-  await prisma.jobHistory.create({
-    data: {
-      jobId: jobId,
-      status,
-      changedBy: 'client_app',
-      notes: error?.message || `Status updated to ${status}`
-    }
-  });
-  
-  res.json({
-    job_id: updated.id,
-    status: updated.status,
-    content_id: updated.contentId,
-    platform: updated.platform,
-    updated_at: updated.updatedAt,
-  });
+const callbackSchema = z.object({
+  status: z.enum(['published', 'failed']),
+  platform_post_id: z.string().optional(), platform_post_url: z.string().optional(), published_at: z.string().datetime().optional(),
+  error: z.object({ code: z.string().optional(), message: z.string().optional(), retryable: z.boolean().optional() }).optional(),
+  device_fingerprint: z.string().optional(), screenshot_url: z.string().optional(),
 });
 
-// GET /tasks/:id - get job details (user auth)
-router.get('/:id', authenticateToken, requireAdmin, async (req, res) => {
-  const job = await prisma.publishJob.findUnique({
-    where: { id: req.params.id as string },
-    include: {
-      content: { include: { assets: true } },
-      accountBinding: true,
-      history: { orderBy: { changedAt: 'desc' } }
-    }
+router.post('/:id/status', authenticateToken, requireTask, async (req, res) => {
+  const parsed = callbackSchema.safeParse(req.body);
+  if (!parsed.success) throw new AppError(422, 'invalid_request', 'Only published or failed task results are accepted');
+  const jobId = String(req.params.id);
+  const auth = req.auth;
+  if (!auth || auth.tokenType !== 'task') throw new AppError(403, 'forbidden', 'Task token required');
+  if (auth.jobId !== jobId) throw new AppError(403, 'forbidden', 'Task token does not match job');
+  const body = parsed.data;
+  await prisma.$transaction(async (tx) => {
+    const job = await tx.publishJob.findUnique({ where: { id: jobId }, include: { content: true, accountBinding: true } });
+    if (!job) throw new AppError(404, 'not_found', 'Job not found');
+    if (job.taskTokenConsumedAt) throw new AppError(409, 'task_token_consumed', 'Task token has already been consumed');
+    if (!job.taskTokenExpiresAt || job.taskTokenExpiresAt <= new Date()) throw new AppError(401, 'task_token_expired', 'Task token has expired');
+    if (job.taskTokenJti !== auth.jti || job.taskDeviceId !== auth.deviceId || job.content.clientId !== auth.clientId || job.accountBinding.clientId !== auth.clientId) throw new AppError(403, 'forbidden', 'Task token binding does not match job');
+    const data = body.status === 'published'
+      ? { platformPostId: body.platform_post_id, platformPostUrl: body.platform_post_url, publishedAt: body.published_at ? new Date(body.published_at) : new Date(), deviceFingerprint: body.device_fingerprint, screenshotUrl: body.screenshot_url, taskTokenConsumedAt: new Date() }
+      : { errorCode: body.error?.code, errorDetail: body.error?.message, errorMessage: body.error?.message, failedAt: new Date(), retryable: body.error?.retryable ?? false, deviceFingerprint: body.device_fingerprint, taskTokenConsumedAt: new Date() };
+    await transitionJob(tx, job.id, activeJobStatuses, body.status, data);
+    await transitionContent(tx, job.contentId, 'delivered', body.status, body.status === 'published' ? { publishedAt: new Date() } : {});
+    await tx.jobHistory.create({ data: { jobId, status: body.status, changedBy: auth.deviceId, notes: 'Task result callback' } });
+    await tx.auditLog.create({ data: { action: `publish_${body.status}`, actorId: auth.deviceId, actorType: 'device', targetType: 'publish_job', targetId: jobId } });
   });
-  
-  if (!job) {
-    res.status(404).json({ error: 'Job not found' });
-    return;
-  }
-  
+  res.json({ job_id: jobId, status: body.status });
+});
+
+router.get('/:id', authenticateToken, requireAdmin, async (req, res) => {
+  const job = await prisma.publishJob.findUnique({ where: { id: String(req.params.id) }, include: { content: { include: { assets: true } }, accountBinding: true, history: { orderBy: { changedAt: 'desc' } } } });
+  if (!job) throw new AppError(404, 'not_found', 'Job not found');
   res.json(job);
 });
-
 export default router;
