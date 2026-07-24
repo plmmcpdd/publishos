@@ -1,5 +1,5 @@
 import { prisma } from '../lib/prisma';
-import { activeJobStatuses, transitionContent, transitionJob } from '../domain/publishing-state';
+import { activeJobStatuses, isTerminalJob, transitionContent, transitionJob } from '../domain/publishing-state';
 
 const TIKTOK_CLIENT_KEY = process.env.TIKTOK_CLIENT_KEY || '';
 const TIKTOK_CLIENT_SECRET = process.env.TIKTOK_CLIENT_SECRET || '';
@@ -155,13 +155,19 @@ export async function publishToTikTok(jobId: string): Promise<void> {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`[publish] jobId=${jobId} FAILED:`, message);
-    await prisma.$transaction(async (tx) => {
-      try {
+    try {
+      await prisma.$transaction(async (tx) => {
+        const current = await tx.publishJob.findUnique({ where: { id: jobId }, select: { status: true } });
+        if (!current || isTerminalJob(current.status)) return;
         await transitionJob(tx, jobId, activeJobStatuses, 'failed', { failedAt: new Date(), errorMessage: message, errorDetail: message, retryCount: { increment: 1 } });
         await transitionContent(tx, job.contentId, 'delivered', 'failed');
         await tx.jobHistory.create({ data: { jobId, status: 'failed', changedBy: 'publisher', notes: 'Server publisher failed' } });
-      } catch { /* a terminal task must not be overwritten by a late publisher error */ }
-    });
+      });
+    } catch (failureError) {
+      const current = await prisma.publishJob.findUnique({ where: { id: jobId }, select: { status: true } });
+      if (current && isTerminalJob(current.status)) return;
+      throw failureError;
+    }
   }
 }
 

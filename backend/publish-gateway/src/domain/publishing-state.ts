@@ -78,7 +78,28 @@ export async function createOrGetActivePublishJob(tx: Prisma.TransactionClient, 
   dispatchWhenImmediate: boolean;
   changedBy?: string;
   createdNotes?: string;
+  auditOnCreate?: {
+    action: string;
+    actorId?: string;
+    actorType: string;
+    targetType: string;
+    targetId: string;
+    details?: string;
+  };
 }) {
+  // This conditional write both revalidates delivery and takes the SQLite write lock
+  // before activeKey is inspected. A stale caller can therefore never create a job
+  // after another transaction has published the content and cleared its activeKey.
+  const delivered = await tx.content.updateMany({
+    where: { id: input.contentId, status: 'delivered' },
+    data: { status: 'delivered' },
+  });
+  if (delivered.count !== 1) {
+    const current = await tx.content.findUnique({ where: { id: input.contentId }, select: { status: true } });
+    if (!current) throw new AppError(404, 'not_found', 'Content not found');
+    throw invalidTransition('content', current.status, 'create_publish_job');
+  }
+
   const result = await createActiveJob(tx, input);
   if (!result.created) return result;
 
@@ -96,5 +117,6 @@ export async function createOrGetActivePublishJob(tx: Prisma.TransactionClient, 
       notes: input.createdNotes || (job.status === 'dispatched' ? 'Job dispatched for immediate device publishing' : 'Job created'),
     },
   });
+  if (input.auditOnCreate) await tx.auditLog.create({ data: input.auditOnCreate });
   return { job, created: true };
 }

@@ -65,7 +65,6 @@ router.post('/:id/publish', authenticateToken, requireAdmin, async (req, res) =>
     const id = String(req.params.id);
     const content = await prisma.content.findUnique({ where: { id } });
     if (!content) throw new AppError(404, 'not_found', 'Content not found');
-    if (content.status !== 'delivered') throw new AppError(409, 'invalid_state_transition', `Cannot publish content from ${content.status}`);
     const binding = await prisma.accountBinding.findFirst({
       where: { clientId: content.clientId, platform: 'tiktok', active: true, status: 'active', accessToken: { not: null } },
       orderBy: { updatedAt: 'desc' },
@@ -74,15 +73,13 @@ router.post('/:id/publish', authenticateToken, requireAdmin, async (req, res) =>
     const { job, created } = await prisma.$transaction((tx) => createOrGetActivePublishJob(tx, {
       contentId: content.id, accountBindingId: binding.id, platform: 'tiktok', dispatchWhenImmediate: false,
       changedBy: req.auth!.sub, createdNotes: 'Server publishing requested by legacy API',
+      auditOnCreate: {
+        action: 'publish_requested', actorId: req.auth!.sub, actorType: 'user', targetType: 'content', targetId: content.id,
+        details: JSON.stringify({ bindingId: binding.id, source: 'legacy' }),
+      },
     }));
 
     if (created) {
-      await prisma.auditLog.create({
-        data: {
-          action: 'publish_requested', actorId: req.auth!.sub, actorType: 'user', targetType: 'content', targetId: content.id,
-          details: JSON.stringify({ jobId: job.id, bindingId: binding.id, source: 'legacy' }),
-        },
-      });
       publishToTikTok(job.id).catch((error) => console.error(`TikTok publish job ${job.id} failed`, error));
     }
 

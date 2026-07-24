@@ -313,7 +313,6 @@ router.post('/:id/confirm', authenticateToken, requireClient, async (req, res) =
       return;
     }
 
-    if (existing.status !== 'delivered') throw new AppError(409, 'invalid_state_transition', `Cannot transition content from ${existing.status} to publishing`);
     const { job, created } = await prisma.$transaction((tx) => createOrGetActivePublishJob(tx, {
       contentId: existing.id, accountBindingId: binding.id, platform: 'tiktok', dispatchWhenImmediate: false,
       changedBy: scopedClientId, createdNotes: 'Server publishing requested by client',

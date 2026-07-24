@@ -35,8 +35,6 @@ router.post('/', authenticateToken, requireAdmin, async (req, res) => {
     return;
   }
   
-  if (content.status !== 'delivered') throw new AppError(409, 'invalid_state_transition', 'Content must be delivered before creating publish jobs');
-
   // Validate account binding
   const binding = await prisma.accountBinding.findUnique({
     where: { id: data.account_binding_id }

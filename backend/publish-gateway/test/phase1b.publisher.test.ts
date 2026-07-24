@@ -153,6 +153,24 @@ describe('Phase 1B server publisher', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it('rolls back a publisher failure transaction and exposes an unexpected history database error', async () => {
+    const { content, job } = await createJob('pending');
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response('not found', { status: 404 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await prisma.$executeRawUnsafe('CREATE TRIGGER force_publisher_failed_history_failure BEFORE INSERT ON "JobHistory" WHEN NEW.status = \'failed\' BEGIN SELECT RAISE(ABORT, \'forced publisher history rollback\'); END;');
+    try {
+      await expect(publishToTikTok(job.id)).rejects.toBeDefined();
+    } finally {
+      await prisma.$executeRawUnsafe('DROP TRIGGER IF EXISTS force_publisher_failed_history_failure');
+    }
+    const unchangedJob = await prisma.publishJob.findUniqueOrThrow({ where: { id: job.id } });
+    const unchangedContent = await prisma.content.findUniqueOrThrow({ where: { id: content.id } });
+    expect(unchangedJob).toMatchObject({ status: 'uploading', activeKey: `${content.id}:tiktok`, failedAt: null });
+    expect(unchangedContent).toMatchObject({ status: 'delivered', publishedAt: null });
+    expect((await prisma.jobHistory.findMany({ where: { jobId: job.id }, orderBy: { changedAt: 'asc' } })).map((item) => item.status)).toEqual(['uploading']);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it.each([
     ['published', 'published'], ['cancelled', 'delivered'], ['failed', 'failed'],
   ])('keeps a %s job terminal and performs no publisher fetch', async (jobStatus: any, contentStatus: any) => {
