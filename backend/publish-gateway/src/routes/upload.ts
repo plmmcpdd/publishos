@@ -19,20 +19,29 @@ function temporaryDirectory(): string {
   return directory;
 }
 
-const upload = multer({
-  storage: multer.diskStorage({ destination: (_req, _file, cb) => cb(null, temporaryDirectory()), filename: (_req, _file, cb) => cb(null, `${crypto.randomUUID()}.upload`) }),
-  limits: { fileSize: Math.max(loadMediaConfig().videoMaxBytes, loadMediaConfig().imageMaxBytes) },
-});
+function uploadForLimit(fileSize: number) {
+  return multer({
+    storage: multer.diskStorage({ destination: (_req, _file, cb) => cb(null, temporaryDirectory()), filename: (_req, _file, cb) => cb(null, `${crypto.randomUUID()}.upload`) }),
+    // Busboy emits its limit event at the configured byte, so reserve one byte
+    // for an inclusive application-level maximum; the next middleware rejects it
+    // and removes the temporary file. Larger streams are still cut off by Multer.
+    limits: { fileSize: fileSize + 1 },
+  });
+}
 
 function removeTemporary(file?: Express.Multer.File): void { if (file?.path) fs.rmSync(file.path, { force: true }); }
 
 function handleUpload(expected: 'video' | 'image', field: string) {
   return [
-    (req: Request, res: any, next: any) => upload.single(field)(req, res, (error: unknown) => {
-      if (error instanceof multer.MulterError && error.code === 'LIMIT_FILE_SIZE') return next(new AppError(413, 'upload_too_large', 'Upload exceeds the permitted size'));
+    (req: Request, res: any, next: any) => {
+      const config = loadMediaConfig();
+      const limit = expected === 'video' ? config.videoMaxBytes : config.imageMaxBytes;
+      uploadForLimit(limit).single(field)(req, res, (error: unknown) => {
+      if (error instanceof multer.MulterError && error.code === 'LIMIT_FILE_SIZE') { removeTemporary(req.file); return next(new AppError(413, 'upload_too_large', 'Upload exceeds the permitted size')); }
       if (error) return next(new AppError(400, 'validation_error', 'Upload could not be processed'));
       next();
-    }),
+      });
+    },
     (req: Request, res: any, next: any) => {
       try {
         if (!req.file) throw new AppError(400, 'validation_error', 'No file uploaded');

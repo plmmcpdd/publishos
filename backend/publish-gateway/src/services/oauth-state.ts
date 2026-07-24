@@ -16,12 +16,12 @@ export async function createOAuthState(input: { clientId: string; flow: OAuthFlo
   return state;
 }
 
-export async function consumeOAuthState(input: { state: string; flow: OAuthFlow; redirectUri: string }): Promise<{ clientId: string }> {
+export async function consumeOAuthState(input: { state: string; flow: OAuthFlow; redirectUri: string; expectedClientId?: string }): Promise<{ clientId: string }> {
   if (!/^[A-Za-z0-9_-]{32,}$/.test(input.state)) throw new AppError(400, 'oauth_state_invalid', 'OAuth state is invalid');
   const hash = stateHash(input.state); const now = new Date();
   return prisma.$transaction(async (tx) => {
     const consumed = await tx.oAuthAuthorizationState.updateMany({
-      where: { stateHash: hash, provider: 'tiktok', flow: input.flow, redirectUri: input.redirectUri, consumedAt: null, expiresAt: { gt: now } },
+      where: { stateHash: hash, provider: 'tiktok', flow: input.flow, redirectUri: input.redirectUri, ...(input.expectedClientId ? { clientId: input.expectedClientId } : {}), consumedAt: null, expiresAt: { gt: now } },
       data: { consumedAt: now },
     });
     if (consumed.count !== 1) {
@@ -29,6 +29,8 @@ export async function consumeOAuthState(input: { state: string; flow: OAuthFlow;
       if (existing?.consumedAt) throw new AppError(409, 'oauth_state_replayed', 'OAuth state has already been used');
       if (existing && existing.expiresAt <= now) throw new AppError(410, 'oauth_state_expired', 'OAuth state has expired');
       if (existing && existing.flow !== input.flow) throw new AppError(400, 'oauth_flow_mismatch', 'OAuth state flow is invalid');
+      // Do not disclose the state owner. The conditional update above leaves it unconsumed.
+      if (existing && input.expectedClientId) throw new AppError(403, 'tenant_mismatch', 'Tenant does not match token');
       throw new AppError(400, 'oauth_state_invalid', 'OAuth state is invalid');
     }
     const record = await tx.oAuthAuthorizationState.findUnique({ where: { stateHash: hash }, select: { clientId: true, flow: true, redirectUri: true, actorId: true, expiresAt: true, consumedAt: true } });

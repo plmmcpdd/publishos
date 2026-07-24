@@ -788,8 +788,8 @@ describe('Redirect security', () => {
     // Verify the implementation re-resolves DNS at each redirect by checking
     // that resolvePublic is called inside the redirect loop
     const source = fs.readFileSync(path.join(gatewayRoot, 'src/services/safe-http-fetch.ts'), 'utf8');
-    // The for loop calls resolvePublic(current.hostname) on each iteration
-    expect(source).toContain('resolvePublic(current.hostname)');
+    // The for loop calls resolvePublic with current.hostname on each iteration.
+    expect(source).toContain('resolvePublic(current.hostname, deadline)');
     // Verify it's inside a for loop (redirect handling)
     expect(source).toMatch(/for\s*\(/);
   });

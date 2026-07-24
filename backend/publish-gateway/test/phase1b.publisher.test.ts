@@ -9,6 +9,8 @@ import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 
 vi.mock('dotenv/config', () => ({}));
+const safeMediaMock = vi.hoisted(() => ({ safeDownloadExternalMedia: vi.fn() }));
+vi.mock('../src/services/safe-http-fetch', () => safeMediaMock);
 
 const testDirectory = mkdtempSync(path.join(tmpdir(), 'publishos-phase1b-publisher-'));
 const testDatabase = path.join(testDirectory, 'gateway.db');
@@ -72,6 +74,7 @@ beforeAll(async () => {
 
 beforeEach(() => {
   vi.useFakeTimers();
+  safeMediaMock.safeDownloadExternalMedia.mockResolvedValue(Buffer.from([1, 2, 3]));
 });
 
 afterEach(() => {
@@ -95,7 +98,6 @@ describe('Phase 1B server publisher', () => {
       clientId, title: 'Legacy actual publisher', description: 'publisher test', videoUrl: '/mock/legacy-api.mp4', platforms: '["tiktok"]', status: 'delivered',
     } });
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response(Uint8Array.from([1, 2]), { status: 200 }))
       .mockResolvedValueOnce(jsonResponse({ error: { code: 'ok' }, data: { publish_id: 'legacy-success', upload_url: 'https://upload.test.local/legacy' } }))
       .mockResolvedValueOnce(new Response('uploaded', { status: 201 }))
       .mockResolvedValueOnce(jsonResponse({ error: { code: 'ok' }, data: { status: 'PUBLISH_COMPLETE' } }));
@@ -111,13 +113,12 @@ describe('Phase 1B server publisher', () => {
     const job = await prisma.publishJob.findUniqueOrThrow({ where: { id: response.body.data.publishJobId } });
     expect(job).toMatchObject({ status: 'published', activeKey: null, publishId: 'legacy-success' });
     expect((await prisma.content.findUniqueOrThrow({ where: { id: content.id } })).status).toBe('published');
-    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
   it('completes upload, polling, and database publication without real network access', async () => {
     const { content, job } = await createJob('pending');
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response(Uint8Array.from([1, 2, 3]), { status: 200 }))
       .mockResolvedValueOnce(jsonResponse({ error: { code: 'ok' }, data: { publish_id: 'publish-success', upload_url: 'https://upload.test.local/video' } }))
       .mockResolvedValueOnce(new Response('uploaded', { status: 201 }))
       .mockResolvedValueOnce(jsonResponse({ error: { code: 'ok' }, data: { status: 'PUBLISH_COMPLETE' } }));
@@ -134,17 +135,18 @@ describe('Phase 1B server publisher', () => {
     expect(updatedContent).toMatchObject({ status: 'published' });
     expect(updatedContent.publishedAt).toBeInstanceOf(Date);
     expect((await prisma.jobHistory.findMany({ where: { jobId: job.id }, orderBy: { changedAt: 'asc' } })).map((item) => item.status)).toEqual(['uploading', 'publishing', 'published']);
-    expect(fetchMock).toHaveBeenCalledTimes(4);
-    expect(String(fetchMock.mock.calls[0][0])).toBe('https://publisher-test.local/mock/video.mp4');
-    expect(String(fetchMock.mock.calls[1][0])).toBe('https://open.tiktokapis.com/v2/post/publish/inbox/video/init/');
-    expect(String(fetchMock.mock.calls[2][0])).toBe('https://upload.test.local/video');
-    expect(String(fetchMock.mock.calls[3][0])).toBe('https://open.tiktokapis.com/v2/post/publish/status/fetch/');
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(safeMediaMock.safeDownloadExternalMedia).toHaveBeenCalledWith('https://publisher-test.local/mock/video.mp4', expect.any(Number));
+    expect(String(fetchMock.mock.calls[0][0])).toBe('https://open.tiktokapis.com/v2/post/publish/inbox/video/init/');
+    expect(String(fetchMock.mock.calls[1][0])).toBe('https://upload.test.local/video');
+    expect(String(fetchMock.mock.calls[2][0])).toBe('https://open.tiktokapis.com/v2/post/publish/status/fetch/');
   });
 
   it('records a download failure through the shared failed transition without publishing history', async () => {
     const { content, job } = await createJob('pending');
-    const fetchMock = vi.fn().mockResolvedValueOnce(new Response('not found', { status: 404 }));
+    const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
+    safeMediaMock.safeDownloadExternalMedia.mockRejectedValueOnce(new Error('Failed to download video'));
 
     await publishToTikTok(job.id);
 
@@ -158,13 +160,14 @@ describe('Phase 1B server publisher', () => {
     const history = await prisma.jobHistory.findMany({ where: { jobId: job.id }, orderBy: { changedAt: 'asc' } });
     expect(history.map((item) => item.status)).toEqual(['uploading', 'failed']);
     expect(history.some((item) => item.status === 'published')).toBe(false);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('rolls back a publisher failure transaction and exposes an unexpected history database error', async () => {
     const { content, job } = await createJob('pending');
-    const fetchMock = vi.fn().mockResolvedValueOnce(new Response('not found', { status: 404 }));
+    const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
+    safeMediaMock.safeDownloadExternalMedia.mockRejectedValueOnce(new Error('Failed to download video'));
     await prisma.$executeRawUnsafe('CREATE TRIGGER force_publisher_failed_history_failure BEFORE INSERT ON "JobHistory" WHEN NEW.status = \'failed\' BEGIN SELECT RAISE(ABORT, \'forced publisher history rollback\'); END;');
     try {
       await expect(publishToTikTok(job.id)).rejects.toBeDefined();
@@ -176,7 +179,7 @@ describe('Phase 1B server publisher', () => {
     expect(unchangedJob).toMatchObject({ status: 'uploading', activeKey: `${content.id}:tiktok`, failedAt: null });
     expect(unchangedContent).toMatchObject({ status: 'delivered', publishedAt: null });
     expect((await prisma.jobHistory.findMany({ where: { jobId: job.id }, orderBy: { changedAt: 'asc' } })).map((item) => item.status)).toEqual(['uploading']);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -198,7 +201,6 @@ describe('Phase 1B server publisher', () => {
   it('does not let a late publisher exception overwrite a completed publication', async () => {
     const { content, job } = await createJob('pending');
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response(Uint8Array.from([1]), { status: 200 }))
       .mockResolvedValueOnce(jsonResponse({ error: { code: 'ok' }, data: { publish_id: 'late-error', upload_url: 'https://upload.test.local/late' } }))
       .mockResolvedValueOnce(new Response('uploaded', { status: 200 }))
       .mockResolvedValueOnce(jsonResponse({ error: { code: 'ok' }, data: { status: 'PUBLISH_COMPLETE' } }));
@@ -214,6 +216,6 @@ describe('Phase 1B server publisher', () => {
     expect(afterLateError).toMatchObject({ status: 'published', publishedAt: published.publishedAt, failedAt: null });
     expect((await prisma.content.findUniqueOrThrow({ where: { id: content.id } })).status).toBe('published');
     expect(await prisma.jobHistory.count({ where: { jobId: job.id, status: 'published' } })).toBe(1);
-    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 });

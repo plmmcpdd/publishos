@@ -1546,6 +1546,55 @@ describe('OAuth Endpoint Integration - Success Path and Tenant Isolation', () =>
   });
 });
 
+describe('Remote review OAuth atomicity regressions', () => {
+  it('does not burn Client A state when Client B submits its own scoped client id', async () => {
+    const created = await request(app).get(`/v1/tiktok/auth-url?clientId=${clientAId}`).set('Authorization', `Bearer ${clientAToken}`);
+    const state = new URL(created.body.data.authUrl).searchParams.get('state')!;
+    const hash = crypto.createHash('sha256').update(state).digest('hex');
+    const beforeBindings = await prisma.accountBinding.count({ where: { clientId: clientAId, platform: 'tiktok' } });
+    const beforeAudit = await prisma.auditLog.count({ where: { action: 'oauth_state_consumed' } });
+
+    const mismatch = await request(app).post('/v1/tiktok/exchange').set('Authorization', `Bearer ${clientBToken}`).send({ clientId: clientBId, code: 'not-sent', state });
+    expect(mismatch.status).toBe(403);
+    expect(mismatch.body.error.code).toBe('tenant_mismatch');
+    expect((await prisma.oAuthAuthorizationState.findUniqueOrThrow({ where: { stateHash: hash } })).consumedAt).toBeNull();
+    expect(tiktokTokenCalls).toBe(0);
+    expect(tiktokUserCalls).toBe(0);
+    expect(await prisma.accountBinding.count({ where: { clientId: clientAId, platform: 'tiktok' } })).toBe(beforeBindings);
+    expect(await prisma.auditLog.count({ where: { action: 'oauth_state_consumed' } })).toBe(beforeAudit);
+
+    const retry = await request(app).post('/v1/tiktok/exchange').set('Authorization', `Bearer ${clientAToken}`).send({ clientId: clientAId, code: 'test-code', state });
+    expect(retry.status).toBe(200);
+    expect((await prisma.oAuthAuthorizationState.findUniqueOrThrow({ where: { stateHash: hash } })).consumedAt).toBeInstanceOf(Date);
+    expect(tiktokTokenCalls).toBe(1);
+  });
+
+  it('rolls back a consumed OAuth state when its audit insert fails, then permits a retry', async () => {
+    const created = await request(app).get(`/v1/tiktok/auth-url?clientId=${clientAId}`).set('Authorization', `Bearer ${clientAToken}`);
+    const state = new URL(created.body.data.authUrl).searchParams.get('state')!;
+    const hash = crypto.createHash('sha256').update(state).digest('hex');
+    const beforeAudit = await prisma.auditLog.count({ where: { action: 'oauth_state_consumed' } });
+    const beforeBinding = await prisma.accountBinding.count({ where: { clientId: clientAId, platform: 'tiktok' } });
+    await prisma.$executeRawUnsafe("CREATE TRIGGER force_oauth_state_audit_failure BEFORE INSERT ON \"AuditLog\" WHEN NEW.action = 'oauth_state_consumed' BEGIN SELECT RAISE(ABORT, 'forced oauth audit failure'); END;");
+    try {
+      const failed = await request(app).post('/v1/tiktok/exchange').set('Authorization', `Bearer ${clientAToken}`).send({ clientId: clientAId, code: 'not-sent', state });
+      expect(failed.status).toBe(500);
+      expect(tiktokTokenCalls).toBe(0);
+      expect((await prisma.oAuthAuthorizationState.findUniqueOrThrow({ where: { stateHash: hash } })).consumedAt).toBeNull();
+      expect(await prisma.auditLog.count({ where: { action: 'oauth_state_consumed' } })).toBe(beforeAudit);
+      expect(await prisma.accountBinding.count({ where: { clientId: clientAId, platform: 'tiktok' } })).toBe(beforeBinding);
+    } finally {
+      await prisma.$executeRawUnsafe('DROP TRIGGER IF EXISTS force_oauth_state_audit_failure');
+    }
+    const retry = await request(app).post('/v1/tiktok/exchange').set('Authorization', `Bearer ${clientAToken}`).send({ clientId: clientAId, code: 'test-code', state });
+    expect(retry.status).toBe(200);
+    expect(tiktokTokenCalls).toBe(1);
+    expect((await prisma.oAuthAuthorizationState.findUniqueOrThrow({ where: { stateHash: hash } })).consumedAt).toBeInstanceOf(Date);
+    const replay = await request(app).post('/v1/tiktok/exchange').set('Authorization', `Bearer ${clientAToken}`).send({ clientId: clientAId, code: 'test-code', state });
+    expect(replay.status).toBe(409);
+  });
+});
+
 describe('OAuth Endpoint Integration - CSP Nonce and HTML Escape', () => {
   describe('12.1 CSP Nonce', () => {
     it('CSP header exists', async () => {

@@ -59,7 +59,8 @@ router.get('/tiktok/auth-url', authenticateToken, rateLimit('oauth_electron_star
 
 router.post('/tiktok/exchange', authenticateToken, rateLimit('oauth_electron_exchange', 30, 10 * 60_000), async (req, res, next) => {
   try { const scoped = clientIdFromAuth(req, req.body?.clientId); credentials(); const code = typeof req.body?.code === 'string' ? req.body.code : ''; const state = typeof req.body?.state === 'string' ? req.body.state : ''; if (!code || !state) throw new AppError(400, 'validation_error', 'code and state are required');
-    const consumed = await consumeOAuthState({ state, flow: 'electron', redirectUri: ELECTRON_REDIRECT_URI }); if (!scoped || scoped !== consumed.clientId) throw new AppError(403, 'tenant_mismatch', 'Tenant does not match token');
+    if (!scoped) throw new AppError(403, 'tenant_mismatch', 'Tenant does not match token');
+    const consumed = await consumeOAuthState({ state, flow: 'electron', redirectUri: ELECTRON_REDIRECT_URI, expectedClientId: scoped });
     const tokens = await exchange(code, ELECTRON_REDIRECT_URI); const username = await profile(tokens.token, tokens.openId); await saveBinding({ clientId: consumed.clientId, username, openId: tokens.openId, token: tokens.token, refreshToken: tokens.refreshToken, expiresIn: tokens.expiresIn, scope: tokens.scope }); res.json({ success: true, data: { username, platform: 'tiktok', message: 'TikTok account connected' } });
   } catch (error) { next(error); }
 });
