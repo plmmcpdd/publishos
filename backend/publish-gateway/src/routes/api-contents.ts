@@ -73,10 +73,10 @@ router.post('/:id/publish', authenticateToken, requireAdmin, async (req, res) =>
     const { job, created } = await prisma.$transaction((tx) => createOrGetActivePublishJob(tx, {
       contentId: content.id, accountBindingId: binding.id, platform: 'tiktok', dispatchWhenImmediate: false,
       changedBy: req.auth!.sub, createdNotes: 'Server publishing requested by legacy API',
-      auditOnCreate: {
+      auditOnCreate: (jobId) => ({
         action: 'publish_requested', actorId: req.auth!.sub, actorType: 'user', targetType: 'content', targetId: content.id,
-        details: JSON.stringify({ bindingId: binding.id, source: 'legacy' }),
-      },
+        details: JSON.stringify({ jobId, bindingId: binding.id, source: 'legacy' }),
+      }),
     }));
 
     if (created) {

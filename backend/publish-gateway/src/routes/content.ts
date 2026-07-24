@@ -316,12 +316,15 @@ router.post('/:id/confirm', authenticateToken, requireClient, async (req, res) =
     const { job, created } = await prisma.$transaction((tx) => createOrGetActivePublishJob(tx, {
       contentId: existing.id, accountBindingId: binding.id, platform: 'tiktok', dispatchWhenImmediate: false,
       changedBy: scopedClientId, createdNotes: 'Server publishing requested by client',
+      auditOnCreate: (jobId) => ({
+        action: 'publish_requested', actorType: 'client', targetType: 'content', targetId: existing.id,
+        actorId: scopedClientId, deviceId, details: JSON.stringify({ jobId, bindingId: binding.id }),
+      }),
     }));
     const content = await prisma.content.findUnique({ where: { id: existing.id }, include: { client: { select: safeClient } } });
     if (!content) throw new AppError(404, 'not_found', 'Content not found');
     if (created) {
       publishToTikTok(job.id).catch((error) => console.error(`TikTok publish job ${job.id} failed`, error));
-      await writeAudit({ action: 'publish_requested', actorType: 'client', targetType: 'content', targetId: content.id, actorId: scopedClientId, deviceId, details: JSON.stringify({ jobId: job.id, bindingId: binding.id }) });
     }
 
     res.json({

@@ -59,18 +59,11 @@ router.post('/', authenticateToken, requireAdmin, async (req, res) => {
     contentId: data.content_id, accountBindingId: data.account_binding_id, platform: data.platform, scheduleAt,
     publishOptions: JSON.stringify(data.publish_options || {}), dispatchWhenImmediate: true,
     changedBy: req.auth!.sub,
+    auditOnCreate: (jobId) => ({
+      action: 'create_publish_job', actorId: req.auth!.sub, actorType: 'user', targetType: 'publish_job', targetId: jobId,
+      details: JSON.stringify({ content_id: data.content_id, platform: data.platform }),
+    }),
   }));
-
-  if (created) await prisma.auditLog.create({
-    data: {
-      action: 'create_publish_job',
-      actorId: req.auth!.sub,
-      actorType: 'user',
-      targetType: 'publish_job',
-      targetId: job.id,
-      details: JSON.stringify({ content_id: data.content_id, platform: data.platform })
-    }
-  });
 
   res.status(created ? 201 : 200).json({
     job_id: job.id,

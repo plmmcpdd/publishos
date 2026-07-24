@@ -270,6 +270,60 @@ describe('Phase 1B state machines and task replay protection', () => {
     expect(publisherMock.publishToTikTok).toHaveBeenCalledTimes(1);
   });
 
+  it('rolls back client confirmation when its publish audit fails and retries idempotently', async () => {
+    publisherMock.publishToTikTok.mockClear();
+    const content = await prisma.content.create({ data: { clientId: clientAId, title: 'Client audit rollback', description: 'test', videoUrl: 'mock/client-audit.mp4', platforms: '["tiktok"]', status: 'delivered' } });
+    await prisma.$executeRawUnsafe('CREATE TRIGGER force_client_publish_audit_failure BEFORE INSERT ON "AuditLog" WHEN NEW.action = \'publish_requested\' AND NEW.actorType = \'client\' BEGIN SELECT RAISE(ABORT, \'forced client audit rollback\'); END;');
+    try {
+      const failed = await request(app).post(`/v1/content/${content.id}/confirm`).set('Authorization', `Bearer ${clientAToken}`).send({ clientId: clientAId, deviceId: 'client-audit-device' });
+      expect(failed.status).toBe(500);
+    } finally {
+      await prisma.$executeRawUnsafe('DROP TRIGGER IF EXISTS force_client_publish_audit_failure');
+    }
+    expect(await prisma.publishJob.count({ where: { contentId: content.id } })).toBe(0);
+    expect(await prisma.jobHistory.count({ where: { job: { contentId: content.id } } })).toBe(0);
+    expect(await prisma.auditLog.count({ where: { action: 'publish_requested', targetId: content.id, actorType: 'client' } })).toBe(0);
+    expect(publisherMock.publishToTikTok).not.toHaveBeenCalled();
+
+    const retried = await request(app).post(`/v1/content/${content.id}/confirm`).set('Authorization', `Bearer ${clientAToken}`).send({ clientId: clientAId, deviceId: 'client-audit-device' });
+    expect(retried.status).toBe(200);
+    expect(retried.body.data).toMatchObject({ idempotent: false, publishJobId: expect.any(String) });
+    const duplicate = await request(app).post(`/v1/content/${content.id}/confirm`).set('Authorization', `Bearer ${clientAToken}`).send({ clientId: clientAId, deviceId: 'client-audit-device' });
+    expect(duplicate.status).toBe(200);
+    expect(duplicate.body.data).toMatchObject({ idempotent: true, publishJobId: retried.body.data.publishJobId });
+    expect(await prisma.publishJob.count({ where: { contentId: content.id } })).toBe(1);
+    expect(await prisma.jobHistory.count({ where: { jobId: retried.body.data.publishJobId } })).toBe(1);
+    expect(await prisma.auditLog.count({ where: { action: 'publish_requested', targetId: content.id, actorType: 'client' } })).toBe(1);
+    expect(publisherMock.publishToTikTok).toHaveBeenCalledTimes(1);
+  });
+
+  it('rolls back admin job creation when its creation audit fails and retries idempotently', async () => {
+    const binding = await prisma.accountBinding.findFirstOrThrow({ where: { clientId: clientAId } });
+    const content = await prisma.content.create({ data: { clientId: clientAId, title: 'Admin audit rollback', description: 'test', videoUrl: 'mock/admin-audit.mp4', platforms: '["tiktok"]', status: 'delivered' } });
+    const body = { content_id: content.id, account_binding_id: binding.id, platform: 'tiktok' };
+    await prisma.$executeRawUnsafe('CREATE TRIGGER force_admin_publish_audit_failure BEFORE INSERT ON "AuditLog" WHEN NEW.action = \'create_publish_job\' BEGIN SELECT RAISE(ABORT, \'forced admin audit rollback\'); END;');
+    try {
+      const failed = await request(app).post('/v1/publish-jobs').set('Authorization', `Bearer ${adminToken}`).send(body);
+      expect(failed.status).toBe(500);
+    } finally {
+      await prisma.$executeRawUnsafe('DROP TRIGGER IF EXISTS force_admin_publish_audit_failure');
+    }
+    expect(await prisma.publishJob.count({ where: { contentId: content.id, status: { in: ['pending', 'dispatched'] } } })).toBe(0);
+    expect(await prisma.publishJob.count({ where: { contentId: content.id, activeKey: { not: null } } })).toBe(0);
+    expect(await prisma.jobHistory.count({ where: { job: { contentId: content.id } } })).toBe(0);
+    expect(await prisma.auditLog.count({ where: { action: 'create_publish_job', targetType: 'publish_job' } })).toBe(0);
+
+    const retried = await request(app).post('/v1/publish-jobs').set('Authorization', `Bearer ${adminToken}`).send(body);
+    expect(retried.status).toBe(201);
+    expect(retried.body).toMatchObject({ status: 'dispatched', idempotent: false });
+    const duplicate = await request(app).post('/v1/publish-jobs').set('Authorization', `Bearer ${adminToken}`).send(body);
+    expect(duplicate.status).toBe(200);
+    expect(duplicate.body).toMatchObject({ job_id: retried.body.job_id, status: 'dispatched', idempotent: true });
+    expect(await prisma.publishJob.count({ where: { contentId: content.id } })).toBe(1);
+    expect(await prisma.jobHistory.count({ where: { jobId: retried.body.job_id } })).toBe(1);
+    expect(await prisma.auditLog.count({ where: { action: 'create_publish_job', targetId: retried.body.job_id } })).toBe(1);
+  });
+
   it('creates only delivered admin jobs, dispatches immediate work, and keeps duplicate creation idempotent', async () => {
     const binding = await prisma.accountBinding.findFirstOrThrow({ where: { clientId: clientAId } });
     const approved = await prisma.content.create({ data: { clientId: clientAId, title: 'Approved admin job', description: 'test', videoUrl: 'mock/approved-job.mp4', platforms: '["tiktok"]', status: 'approved' } });

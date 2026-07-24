@@ -78,13 +78,15 @@ export async function createOrGetActivePublishJob(tx: Prisma.TransactionClient, 
   dispatchWhenImmediate: boolean;
   changedBy?: string;
   createdNotes?: string;
-  auditOnCreate?: {
+  auditOnCreate?: (jobId: string) => {
     action: string;
     actorId?: string;
     actorType: string;
     targetType: string;
     targetId: string;
     details?: string;
+    deviceId?: string | null;
+    ipAddress?: string | null;
   };
 }) {
   // This conditional write both revalidates delivery and takes the SQLite write lock
@@ -117,6 +119,6 @@ export async function createOrGetActivePublishJob(tx: Prisma.TransactionClient, 
       notes: input.createdNotes || (job.status === 'dispatched' ? 'Job dispatched for immediate device publishing' : 'Job created'),
     },
   });
-  if (input.auditOnCreate) await tx.auditLog.create({ data: input.auditOnCreate });
+  if (input.auditOnCreate) await tx.auditLog.create({ data: input.auditOnCreate(job.id) });
   return { job, created: true };
 }
