@@ -11,6 +11,8 @@ import Monitor from './pages/Monitor';
 import AuditLog from './pages/AuditLog';
 import SocialAccounts from './pages/SocialAccounts';
 import Analytics from './pages/Analytics';
+import TicketList from './pages/TicketList';
+import TicketDetail from './pages/TicketDetail';
 
 function App() {
   const [authed, setAuthed] = useState(() => Boolean(localStorage.getItem('adminToken')));
@@ -36,6 +38,8 @@ function App() {
           <Route path="clients" element={<CustomerList />} />
           <Route path="social-accounts" element={<SocialAccounts />} />
           <Route path="analytics" element={<Analytics />} />
+          <Route path="tickets" element={<TicketList />} />
+          <Route path="tickets/:id" element={<TicketDetail />} />
           <Route path="monitor" element={<Monitor />} />
           <Route path="audit" element={<AuditLog />} />
           <Route path="settings" element={<Settings />} />
