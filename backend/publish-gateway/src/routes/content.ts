@@ -4,6 +4,7 @@ import { prisma } from '../lib/prisma';
 import { publishToTikTok } from '../services/publisher';
 import { authenticateToken, clientIdFromAuth, requireAdmin, requireClient } from '../middleware/auth';
 import { AppError, sendInternalError } from '../middleware/errors';
+import { createActiveJob, transitionContent } from '../domain/publishing-state';
 
 const router = Router();
 const safeClient = { id: true, name: true, email: true, industry: true, active: true, createdAt: true, updatedAt: true } as const;
@@ -38,7 +39,7 @@ const createContentSchema = z.object({
   scheduleAt: z.string().datetime().optional(),
   schedule_at: z.string().datetime().optional(),
   metadata: z.record(z.any()).optional(),
-  status: z.enum(['pending_review', 'rejected', 'approved', 'published', 'failed', 'draft', 'delivered']).optional(),
+  status: z.enum(['pending_review', 'draft']).optional(),
   assets: z.array(z.object({
     type: z.string(),
     source: z.string().optional(),
@@ -238,6 +239,7 @@ router.get('/:id/publish-status', authenticateToken, requireAdmin, async (req, r
     });
     res.json({ success: true, data: jobs });
   } catch (error) {
+    if (error instanceof AppError) throw error;
     sendInternalError(req, res);
   }
 });
@@ -261,11 +263,10 @@ router.get('/:id', authenticateToken, async (req, res) => {
 
 router.post('/:id/deliver', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const content = await prisma.content.update({
-      where: { id: String(req.params.id) },
-      data: { status: 'delivered' },
-      include: { client: { select: safeClient } },
-    });
+    const id = String(req.params.id);
+    await prisma.$transaction((tx) => transitionContent(tx, id, ['approved', 'failed'], 'delivered'));
+    const content = await prisma.content.findUnique({ where: { id }, include: { client: { select: safeClient } } });
+    if (!content) throw new AppError(404, 'not_found', 'Content not found');
 
     await writeAudit({
       action: 'delivered',
@@ -277,6 +278,7 @@ router.post('/:id/deliver', authenticateToken, requireAdmin, async (req, res) =>
 
     res.json({ success: true, data: serializeContent(content) });
   } catch (error) {
+    if (error instanceof AppError) throw error;
     sendInternalError(req, res);
   }
 });
@@ -311,34 +313,14 @@ router.post('/:id/confirm', authenticateToken, requireClient, async (req, res) =
       return;
     }
 
-    const content = await prisma.content.update({
-      where: { id: String(req.params.id) },
-      data: { status: 'published', publishedAt: new Date() },
-      include: { client: { select: safeClient } },
-    });
-
-    const job = await prisma.publishJob.create({
-      data: {
-        contentId: content.id,
-        accountBindingId: binding.id,
-        platform: 'tiktok',
-        status: 'pending',
-      },
-    });
-
-    publishToTikTok(job.id).catch((error) => {
-      console.error(`TikTok publish job ${job.id} failed`, error);
-    });
-
-    await writeAudit({
-      action: 'published',
-      actorType: 'client',
-      targetType: 'content',
-      targetId: content.id,
-      actorId: scopedClientId,
-      deviceId,
-      details: JSON.stringify({ message: 'Published to TikTok', jobId: job.id, bindingId: binding.id }),
-    });
+    if (existing.status !== 'delivered') throw new AppError(409, 'invalid_state_transition', `Cannot transition content from ${existing.status} to publishing`);
+    const { job, created } = await prisma.$transaction((tx) => createActiveJob(tx, { contentId: existing.id, accountBindingId: binding.id, platform: 'tiktok' }));
+    const content = await prisma.content.findUnique({ where: { id: existing.id }, include: { client: { select: safeClient } } });
+    if (!content) throw new AppError(404, 'not_found', 'Content not found');
+    if (created) {
+      publishToTikTok(job.id).catch((error) => console.error(`TikTok publish job ${job.id} failed`, error));
+      await writeAudit({ action: 'publish_requested', actorType: 'client', targetType: 'content', targetId: content.id, actorId: scopedClientId, deviceId, details: JSON.stringify({ jobId: job.id, bindingId: binding.id }) });
+    }
 
     res.json({
       success: true,
@@ -346,6 +328,7 @@ router.post('/:id/confirm', authenticateToken, requireClient, async (req, res) =
         ...serializeContent(content),
         publishing: true,
         publishJobId: job.id,
+        idempotent: !created,
         message: 'Publishing to TikTok',
       },
     });
@@ -356,11 +339,10 @@ router.post('/:id/confirm', authenticateToken, requireClient, async (req, res) =
 });
 
 router.post('/:id/approve', authenticateToken, requireAdmin, async (req, res) => {
-  const content = await prisma.content.update({
-    where: { id: String(req.params.id) },
-    data: { status: 'approved' },
-    include: { assets: true, client: { select: safeClient } },
-  });
+  const id = String(req.params.id);
+  await prisma.$transaction((tx) => transitionContent(tx, id, ['draft', 'pending_review', 'rejected'], 'approved'));
+  const content = await prisma.content.findUnique({ where: { id }, include: { assets: true, client: { select: safeClient } } });
+  if (!content) throw new AppError(404, 'not_found', 'Content not found');
 
   await writeAudit({
     action: 'approve_content',
@@ -375,11 +357,10 @@ router.post('/:id/approve', authenticateToken, requireAdmin, async (req, res) =>
 
 router.post('/:id/reject', authenticateToken, requireAdmin, async (req, res) => {
   const { reason, detail } = req.body;
-  const content = await prisma.content.update({
-    where: { id: String(req.params.id) },
-    data: { status: 'rejected' },
-    include: { client: { select: safeClient } },
-  });
+  const id = String(req.params.id);
+  await prisma.$transaction((tx) => transitionContent(tx, id, ['draft', 'pending_review'], 'rejected'));
+  const content = await prisma.content.findUnique({ where: { id }, include: { client: { select: safeClient } } });
+  if (!content) throw new AppError(404, 'not_found', 'Content not found');
 
   await writeAudit({
     action: 'reject_content',

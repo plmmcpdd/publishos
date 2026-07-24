@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { prisma } from '../lib/prisma';
 import { authenticateToken, clientIdFromAuth, requireAdmin } from '../middleware/auth';
+import { AppError } from '../middleware/errors';
+import { transitionContent } from '../domain/publishing-state';
 
 const router = Router();
 
@@ -59,10 +61,10 @@ router.get('/', authenticateToken, async (req, res) => {
 
 router.post('/:id/publish', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const content = await prisma.content.update({
-      where: { id: String(req.params.id) },
-      data: { status: 'published' },
-    });
+    const id = String(req.params.id);
+    await prisma.$transaction((tx) => transitionContent(tx, id, 'delivered', 'published', { publishedAt: new Date() }));
+    const content = await prisma.content.findUnique({ where: { id } });
+    if (!content) throw new AppError(404, 'not_found', 'Content not found');
 
     await prisma.auditLog.create({
       data: {
@@ -75,17 +77,18 @@ router.post('/:id/publish', authenticateToken, requireAdmin, async (req, res) =>
     });
 
     res.json({ data: serializeContent(content) });
-  } catch {
-    res.status(404).json({ error: res.locals.t('errors.contentNotFound') });
+  } catch (error) {
+    if (error instanceof AppError) throw error;
+    throw error;
   }
 });
 
 router.post('/:id/approve', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const content = await prisma.content.update({
-      where: { id: String(req.params.id) },
-      data: { status: 'approved' },
-    });
+    const id = String(req.params.id);
+    await prisma.$transaction((tx) => transitionContent(tx, id, ['draft', 'pending_review', 'rejected'], 'approved'));
+    const content = await prisma.content.findUnique({ where: { id } });
+    if (!content) throw new AppError(404, 'not_found', 'Content not found');
 
     await prisma.auditLog.create({
       data: {
@@ -98,17 +101,18 @@ router.post('/:id/approve', authenticateToken, requireAdmin, async (req, res) =>
     });
 
     res.json({ data: serializeContent(content) });
-  } catch {
-    res.status(404).json({ error: res.locals.t('errors.contentNotFound') });
+  } catch (error) {
+    if (error instanceof AppError) throw error;
+    throw error;
   }
 });
 
 router.post('/:id/reject', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const content = await prisma.content.update({
-      where: { id: String(req.params.id) },
-      data: { status: 'rejected' },
-    });
+    const id = String(req.params.id);
+    await prisma.$transaction((tx) => transitionContent(tx, id, ['draft', 'pending_review'], 'rejected'));
+    const content = await prisma.content.findUnique({ where: { id } });
+    if (!content) throw new AppError(404, 'not_found', 'Content not found');
 
     await prisma.auditLog.create({
       data: {
@@ -121,8 +125,9 @@ router.post('/:id/reject', authenticateToken, requireAdmin, async (req, res) => 
     });
 
     res.json({ data: serializeContent(content) });
-  } catch {
-    res.status(404).json({ error: res.locals.t('errors.contentNotFound') });
+  } catch (error) {
+    if (error instanceof AppError) throw error;
+    throw error;
   }
 });
 

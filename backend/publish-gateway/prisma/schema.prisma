@@ -127,6 +127,11 @@ model PublishJob {
   publishOptions      String?        // JSON string: platform-specific options
   clientToken         String?        // short-lived token for client app
   jobToken            String?        // one-time token for status callback
+  activeKey           String?        @unique
+  taskTokenJti        String?        @unique
+  taskTokenExpiresAt  DateTime?
+  taskTokenConsumedAt DateTime?
+  taskDeviceId        String?
   platformPostId      String?
   platformPostUrl     String?
   publishId           String?
