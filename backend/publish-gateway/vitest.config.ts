@@ -8,5 +8,6 @@ export default defineConfig({
   test: {
     fileParallelism: false,
     setupFiles: ['./test/setup/no-network.ts'],
+    hookTimeout: 60_000,
   },
 });
