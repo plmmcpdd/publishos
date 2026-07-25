@@ -105,3 +105,35 @@ export function loadHttpSecurityConfig(env: NodeJS.ProcessEnv = process.env): Ht
     trustProxyHops,
   };
 }
+
+export function validateRuntimeConfig(env: NodeJS.ProcessEnv = process.env): void {
+  loadSecurityConfig(env);
+  loadMediaConfig(env);
+  loadHttpSecurityConfig(env);
+
+  const databaseUrl = env.DATABASE_URL || '';
+  if (!databaseUrl) throw new Error('DATABASE_URL must be configured');
+  if (!databaseUrl.startsWith('file:')) {
+    throw new Error('Phase 1 uses SQLite migrations; DATABASE_URL must use the file: scheme');
+  }
+  if (env.NODE_ENV === 'production' && (databaseUrl.includes(':memory:') || /(^|[/_.-])test([/_.-]|$)/iu.test(databaseUrl))) {
+    throw new Error('Production DATABASE_URL must not point to an in-memory or test database');
+  }
+
+  const port = Number(env.PORT || 3000);
+  if (!Number.isSafeInteger(port) || port < 1 || port > 65535) throw new Error('PORT must be between 1 and 65535');
+
+  if (env.NODE_ENV === 'production') {
+    if (!env.TIKTOK_CLIENT_KEY || !env.TIKTOK_CLIENT_SECRET) {
+      throw new Error('TIKTOK_CLIENT_KEY and TIKTOK_CLIENT_SECRET must be configured in production');
+    }
+    if (!env.TIKTOK_REDIRECT_URI) throw new Error('TIKTOK_REDIRECT_URI must be configured in production');
+    let redirect: URL;
+    try {
+      redirect = new URL(env.TIKTOK_REDIRECT_URI);
+    } catch {
+      throw new Error('TIKTOK_REDIRECT_URI must be a valid URL');
+    }
+    if (redirect.protocol !== 'https:') throw new Error('TIKTOK_REDIRECT_URI must use HTTPS in production');
+  }
+}

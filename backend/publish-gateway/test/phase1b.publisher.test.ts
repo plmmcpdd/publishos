@@ -93,27 +93,14 @@ afterAll(async () => {
 });
 
 describe('Phase 1B server publisher', () => {
-  it('publishes Legacy API content only after the real mocked publisher succeeds', async () => {
+  it('legacy admin publish API returns 410 Gone with deprecation header', async () => {
     const content = await prisma.content.create({ data: {
       clientId, title: 'Legacy actual publisher', description: 'publisher test', videoUrl: '/mock/legacy-api.mp4', platforms: '["tiktok"]', status: 'delivered',
     } });
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(jsonResponse({ error: { code: 'ok' }, data: { publish_id: 'legacy-success', upload_url: 'https://upload.test.local/legacy' } }))
-      .mockResolvedValueOnce(new Response('uploaded', { status: 201 }))
-      .mockResolvedValueOnce(jsonResponse({ error: { code: 'ok' }, data: { status: 'PUBLISH_COMPLETE' } }));
-    vi.stubGlobal('fetch', fetchMock);
-
     const response = await request(app).post(`/api/v1/contents/${content.id}/publish`).set('Authorization', `Bearer ${adminToken}`);
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(410);
     expect(response.headers.deprecation).toBe('true');
-    expect(response.body.data).toMatchObject({ publishing: true, idempotent: false, publishJobId: expect.any(String) });
-    expect((await prisma.content.findUniqueOrThrow({ where: { id: content.id } })).status).toBe('delivered');
-    await vi.advanceTimersByTimeAsync(10_000);
-
-    const job = await prisma.publishJob.findUniqueOrThrow({ where: { id: response.body.data.publishJobId } });
-    expect(job).toMatchObject({ status: 'published', activeKey: null, publishId: 'legacy-success' });
-    expect((await prisma.content.findUniqueOrThrow({ where: { id: content.id } })).status).toBe('published');
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(response.body.error.code).toBe('client_send_required');
   });
 
   it('completes upload, polling, and database publication without real network access', async () => {
@@ -134,7 +121,7 @@ describe('Phase 1B server publisher', () => {
     expect(updatedJob.publishedAt).toBeInstanceOf(Date);
     expect(updatedContent).toMatchObject({ status: 'published' });
     expect(updatedContent.publishedAt).toBeInstanceOf(Date);
-    expect((await prisma.jobHistory.findMany({ where: { jobId: job.id }, orderBy: { changedAt: 'asc' } })).map((item) => item.status)).toEqual(['uploading', 'publishing', 'published']);
+    expect((await prisma.jobHistory.findMany({ where: { jobId: job.id }, orderBy: { changedAt: 'asc' } })).map((item) => item.status)).toEqual(['tiktok_initializing', 'tiktok_upload_initialized', 'tiktok_processing', 'published']);
     expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(safeMediaMock.safeDownloadExternalMedia).toHaveBeenCalledWith('https://publisher-test.local/mock/video.mp4', expect.any(Number));
     expect(String(fetchMock.mock.calls[0][0])).toBe('https://open.tiktokapis.com/v2/post/publish/inbox/video/init/');
@@ -155,10 +142,9 @@ describe('Phase 1B server publisher', () => {
     expect(updatedJob).toMatchObject({ status: 'failed', activeKey: null, publishedAt: null });
     expect(updatedJob.failedAt).toBeInstanceOf(Date);
     expect(updatedJob.errorMessage).toContain('Failed to download video');
-    expect(updatedJob.errorDetail).toContain('Failed to download video');
     expect(updatedContent.status).toBe('failed');
     const history = await prisma.jobHistory.findMany({ where: { jobId: job.id }, orderBy: { changedAt: 'asc' } });
-    expect(history.map((item) => item.status)).toEqual(['uploading', 'failed']);
+    expect(history.map((item) => item.status)).toEqual(['tiktok_initializing', 'failed']);
     expect(history.some((item) => item.status === 'published')).toBe(false);
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -178,7 +164,7 @@ describe('Phase 1B server publisher', () => {
     const unchangedContent = await prisma.content.findUniqueOrThrow({ where: { id: content.id } });
     expect(unchangedJob).toMatchObject({ status: 'uploading', activeKey: `${content.id}:tiktok`, failedAt: null });
     expect(unchangedContent).toMatchObject({ status: 'delivered', publishedAt: null });
-    expect((await prisma.jobHistory.findMany({ where: { jobId: job.id }, orderBy: { changedAt: 'asc' } })).map((item) => item.status)).toEqual(['uploading']);
+    expect((await prisma.jobHistory.findMany({ where: { jobId: job.id }, orderBy: { changedAt: 'asc' } })).map((item) => item.status)).toEqual(['tiktok_initializing']);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

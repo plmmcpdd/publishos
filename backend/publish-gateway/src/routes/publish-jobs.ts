@@ -24,6 +24,13 @@ router.post('/', authenticateToken, requireAdmin, async (req, res) => {
   }
 
   const data = parse.data;
+  if (data.platform.toLowerCase() === 'tiktok') {
+    throw new AppError(
+      409,
+      'client_send_required',
+      'TikTok jobs must be initiated by the customer through Send to TikTok',
+    );
+  }
 
   // A publication task may only be created after the separate delivery action.
   const content = await prisma.content.findUnique({

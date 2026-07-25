@@ -181,7 +181,7 @@ describe('Phase 1B publish job state matrix', () => {
 });
 
 describe('Phase 1B task callback transaction rollback', () => {
-  it('rolls back published callback state and permits retry with the same task token', async () => {
+  it('TikTok task callback is blocked with 409 since completion is accepted only from official TikTok status API', async () => {
     const content = await createContent('delivered');
     const token = issueToken({ tokenType: 'task', sub: 'placeholder', jobId: 'placeholder', deviceId: 'rollback-device', clientId, role: 'task' }, '24h');
     const decoded = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString('utf8')) as { jti: string; exp: number };
@@ -192,27 +192,9 @@ describe('Phase 1B task callback transaction rollback', () => {
     const validToken = issueToken({ tokenType: 'task', sub: job.id, jobId: job.id, deviceId: 'rollback-device', clientId, role: 'task' }, '24h');
     const validDecoded = JSON.parse(Buffer.from(validToken.split('.')[1], 'base64url').toString('utf8')) as { jti: string; exp: number };
     await prisma.publishJob.update({ where: { id: job.id }, data: { taskTokenJti: validDecoded.jti, taskTokenExpiresAt: new Date(validDecoded.exp * 1000) } });
-    const before = {
-      job: await prisma.publishJob.findUniqueOrThrow({ where: { id: job.id } }),
-      content: await prisma.content.findUniqueOrThrow({ where: { id: content.id } }),
-      history: await prisma.jobHistory.count({ where: { jobId: job.id } }),
-      audit: await prisma.auditLog.count({ where: { targetId: job.id } }),
-    };
-    await prisma.$executeRawUnsafe('CREATE TRIGGER force_job_history_failure BEFORE INSERT ON "JobHistory" BEGIN SELECT RAISE(ABORT, \'forced test rollback\'); END;');
-    try {
-      const failed = await request(app).post(`/v1/tasks/${job.id}/status`).set('Authorization', `Bearer ${validToken}`).send({ status: 'published' });
-      expect(failed.status).toBe(500);
-    } finally {
-      await prisma.$executeRawUnsafe('DROP TRIGGER IF EXISTS force_job_history_failure');
-    }
-    const rolledBackJob = await prisma.publishJob.findUniqueOrThrow({ where: { id: job.id } });
-    const rolledBackContent = await prisma.content.findUniqueOrThrow({ where: { id: content.id } });
-    expect(rolledBackJob).toMatchObject({ status: 'client_confirmed', activeKey: before.job.activeKey, taskTokenConsumedAt: null, publishedAt: null, failedAt: null });
-    expect(rolledBackContent).toMatchObject({ status: 'delivered', publishedAt: null });
-    expect(await prisma.jobHistory.count({ where: { jobId: job.id } })).toBe(before.history);
-    expect(await prisma.auditLog.count({ where: { targetId: job.id } })).toBe(before.audit);
-    const retried = await request(app).post(`/v1/tasks/${job.id}/status`).set('Authorization', `Bearer ${validToken}`).send({ status: 'published' });
-    expect(retried.status).toBe(200);
-    expect((await prisma.publishJob.findUniqueOrThrow({ where: { id: job.id } })).taskTokenConsumedAt).toBeInstanceOf(Date);
+    const result = await request(app).post(`/v1/tasks/${job.id}/status`).set('Authorization', `Bearer ${validToken}`).send({ status: 'published' });
+    expect(result.status).toBe(409);
+    expect(result.body.error.code).toBe('official_tiktok_status_required');
+    expect((await prisma.publishJob.findUniqueOrThrow({ where: { id: job.id } })).status).toBe('client_confirmed');
   });
 });

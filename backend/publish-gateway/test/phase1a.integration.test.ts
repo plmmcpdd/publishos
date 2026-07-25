@@ -146,7 +146,7 @@ describe('Phase 1A authentication and tenant isolation', () => {
     expect((await request(app).post('/v1/tiktok/exchange').set('Authorization', `Bearer ${clientAToken}`).send({ clientId: clientAId, code: 'not-used' })).status).toBe(500);
     expect((await request(app).get('/v1/tiktok/callback')).status).toBe(400);
     const bindingB = await prisma.accountBinding.findFirstOrThrow({ where: { clientId: clientBId } });
-    expect((await request(app).post('/v1/publish-jobs').set('Authorization', `Bearer ${adminToken}`).send({ content_id: contentAId, account_binding_id: bindingB.id, platform: 'tiktok' })).status).toBe(422);
+    expect((await request(app).post('/v1/publish-jobs').set('Authorization', `Bearer ${adminToken}`).send({ content_id: contentAId, account_binding_id: bindingB.id, platform: 'tiktok' })).status).toBe(409);
     const legacy = await request(app).get(`/api/v1/contents?client_id=${clientAId}`).set('Authorization', `Bearer ${clientAToken}`);
     expect(legacy.status).toBe(200);
     expect(legacy.headers.deprecation).toBe('true');
@@ -198,26 +198,16 @@ describe('Ticket routes require admin authentication', () => {
 });
 
 describe('Phase 1B state machines and task replay protection', () => {
-  it('routes legacy publish through one idempotent server publish job without publishing content early', async () => {
+  it('legacy admin publish API returns 410 Gone since customer must use Send to TikTok', async () => {
     publisherMock.publishToTikTok.mockClear();
     const content = await prisma.content.create({ data: { clientId: clientAId, title: 'Legacy publish', description: 'test', videoUrl: 'mock/legacy.mp4', platforms: '["tiktok"]', status: 'delivered' } });
     const first = await request(app).post(`/api/v1/contents/${content.id}/publish`).set('Authorization', `Bearer ${adminToken}`);
-    expect(first.status).toBe(200);
+    expect(first.status).toBe(410);
     expect(first.headers.deprecation).toBe('true');
-    expect(first.body.data).toMatchObject({ publishing: true, idempotent: false, publishJobId: expect.any(String) });
-    const jobId = first.body.data.publishJobId as string;
+    expect(first.body.error.code).toBe('client_send_required');
     expect((await prisma.content.findUniqueOrThrow({ where: { id: content.id } })).status).toBe('delivered');
-    expect(await prisma.publishJob.count({ where: { contentId: content.id, activeKey: `${content.id}:tiktok` } })).toBe(1);
-    expect(publisherMock.publishToTikTok).toHaveBeenCalledTimes(1);
-    expect(publisherMock.publishToTikTok).toHaveBeenCalledWith(jobId);
-
-    const second = await request(app).post(`/api/v1/contents/${content.id}/publish`).set('Authorization', `Bearer ${adminToken}`);
-    expect(second.status).toBe(200);
-    expect(second.headers.deprecation).toBe('true');
-    expect(second.body.data).toMatchObject({ publishing: true, idempotent: true, publishJobId: jobId });
-    expect(publisherMock.publishToTikTok).toHaveBeenCalledTimes(1);
-    expect(await prisma.jobHistory.count({ where: { jobId } })).toBe(1);
-    expect(await prisma.auditLog.count({ where: { action: 'publish_requested', targetId: content.id } })).toBe(1);
+    expect(await prisma.publishJob.count({ where: { contentId: content.id } })).toBe(0);
+    expect(publisherMock.publishToTikTok).not.toHaveBeenCalled();
   });
 
   it('does not create a second legacy job after a stale delivered read races with completion', async () => {
@@ -243,8 +233,8 @@ describe('Phase 1B state machines and task replay protection', () => {
     }))).rejects.toMatchObject({ status: 409, code: 'invalid_state_transition' });
 
     const result = await request(app).post(`/api/v1/contents/${content.id}/publish`).set('Authorization', `Bearer ${adminToken}`);
-    expect(result.status).toBe(409);
-    expect(result.body.error.code).toBe('invalid_state_transition');
+    expect(result.status).toBe(410);
+    expect(result.body.error.code).toBe('client_send_required');
     expect(result.headers.deprecation).toBe('true');
     expect((await prisma.content.findUniqueOrThrow({ where: { id: content.id } })).status).toBe('published');
     expect(await prisma.publishJob.count({ where: { contentId: content.id } })).toBe(1);
@@ -252,125 +242,76 @@ describe('Phase 1B state machines and task replay protection', () => {
     expect(publisherMock.publishToTikTok).not.toHaveBeenCalled();
   });
 
-  it('rolls back legacy job creation when its audit insert fails and safely retries', async () => {
+  it('legacy admin publish API returns 410 regardless of audit triggers', async () => {
     publisherMock.publishToTikTok.mockClear();
     const content = await prisma.content.create({ data: { clientId: clientAId, title: 'Legacy audit rollback', description: 'test', videoUrl: 'mock/legacy-audit.mp4', platforms: '["tiktok"]', status: 'delivered' } });
-    await prisma.$executeRawUnsafe('CREATE TRIGGER force_legacy_publish_audit_failure BEFORE INSERT ON "AuditLog" WHEN NEW.action = \'publish_requested\' BEGIN SELECT RAISE(ABORT, \'forced legacy audit rollback\'); END;');
-    try {
-      const failed = await request(app).post(`/api/v1/contents/${content.id}/publish`).set('Authorization', `Bearer ${adminToken}`);
-      expect(failed.status).toBe(500);
-      expect(failed.headers.deprecation).toBe('true');
-    } finally {
-      await prisma.$executeRawUnsafe('DROP TRIGGER IF EXISTS force_legacy_publish_audit_failure');
-    }
+    const failed = await request(app).post(`/api/v1/contents/${content.id}/publish`).set('Authorization', `Bearer ${adminToken}`);
+    expect(failed.status).toBe(410);
+    expect(failed.headers.deprecation).toBe('true');
     expect(await prisma.publishJob.count({ where: { contentId: content.id } })).toBe(0);
-    expect(await prisma.jobHistory.count({ where: { job: { contentId: content.id } } })).toBe(0);
     expect(publisherMock.publishToTikTok).not.toHaveBeenCalled();
-
-    const retried = await request(app).post(`/api/v1/contents/${content.id}/publish`).set('Authorization', `Bearer ${adminToken}`);
-    expect(retried.status).toBe(200);
-    expect(retried.body.data).toMatchObject({ publishing: true, idempotent: false, publishJobId: expect.any(String) });
-    expect(await prisma.publishJob.count({ where: { contentId: content.id } })).toBe(1);
-    expect(await prisma.jobHistory.count({ where: { jobId: retried.body.data.publishJobId } })).toBe(1);
-    expect(await prisma.auditLog.count({ where: { action: 'publish_requested', targetId: content.id } })).toBe(1);
-    expect(publisherMock.publishToTikTok).toHaveBeenCalledTimes(1);
   });
 
-  it('rolls back client confirmation when its publish audit fails and retries idempotently', async () => {
+  it('rolls back client send-to-tiktok when its audit insert fails and retries idempotently', async () => {
     publisherMock.publishToTikTok.mockClear();
     const content = await prisma.content.create({ data: { clientId: clientAId, title: 'Client audit rollback', description: 'test', videoUrl: 'mock/client-audit.mp4', platforms: '["tiktok"]', status: 'delivered' } });
-    await prisma.$executeRawUnsafe('CREATE TRIGGER force_client_publish_audit_failure BEFORE INSERT ON "AuditLog" WHEN NEW.action = \'publish_requested\' AND NEW.actorType = \'client\' BEGIN SELECT RAISE(ABORT, \'forced client audit rollback\'); END;');
+    await prisma.$executeRawUnsafe('CREATE TRIGGER force_client_publish_audit_failure BEFORE INSERT ON "AuditLog" WHEN NEW.action = \'tiktok_send_requested\' AND NEW.actorType = \'client\' BEGIN SELECT RAISE(ABORT, \'forced client audit rollback\'); END;');
     try {
-      const failed = await request(app).post(`/v1/content/${content.id}/confirm`).set('Authorization', `Bearer ${clientAToken}`).send({ clientId: clientAId, deviceId: 'client-audit-device' });
+      const failed = await request(app).post(`/v1/content/${content.id}/send-to-tiktok`).set('Authorization', `Bearer ${clientAToken}`).send({ clientId: clientAId, contentConfirmed: true, deviceId: 'client-audit-device' });
       expect(failed.status).toBe(500);
     } finally {
       await prisma.$executeRawUnsafe('DROP TRIGGER IF EXISTS force_client_publish_audit_failure');
     }
     expect(await prisma.publishJob.count({ where: { contentId: content.id } })).toBe(0);
     expect(await prisma.jobHistory.count({ where: { job: { contentId: content.id } } })).toBe(0);
-    expect(await prisma.auditLog.count({ where: { action: 'publish_requested', targetId: content.id, actorType: 'client' } })).toBe(0);
+    expect(await prisma.auditLog.count({ where: { action: 'tiktok_send_requested', targetId: content.id, actorType: 'client' } })).toBe(0);
     expect(publisherMock.publishToTikTok).not.toHaveBeenCalled();
 
-    const retried = await request(app).post(`/v1/content/${content.id}/confirm`).set('Authorization', `Bearer ${clientAToken}`).send({ clientId: clientAId, deviceId: 'client-audit-device' });
-    expect(retried.status).toBe(200);
+    const retried = await request(app).post(`/v1/content/${content.id}/send-to-tiktok`).set('Authorization', `Bearer ${clientAToken}`).send({ clientId: clientAId, contentConfirmed: true, deviceId: 'client-audit-device' });
+    expect(retried.status).toBe(202);
     expect(retried.body.data).toMatchObject({ idempotent: false, publishJobId: expect.any(String) });
-    const duplicate = await request(app).post(`/v1/content/${content.id}/confirm`).set('Authorization', `Bearer ${clientAToken}`).send({ clientId: clientAId, deviceId: 'client-audit-device' });
+    const duplicate = await request(app).post(`/v1/content/${content.id}/send-to-tiktok`).set('Authorization', `Bearer ${clientAToken}`).send({ clientId: clientAId, contentConfirmed: true, deviceId: 'client-audit-device' });
     expect(duplicate.status).toBe(200);
     expect(duplicate.body.data).toMatchObject({ idempotent: true, publishJobId: retried.body.data.publishJobId });
     expect(await prisma.publishJob.count({ where: { contentId: content.id } })).toBe(1);
     expect(await prisma.jobHistory.count({ where: { jobId: retried.body.data.publishJobId } })).toBe(1);
-    expect(await prisma.auditLog.count({ where: { action: 'publish_requested', targetId: content.id, actorType: 'client' } })).toBe(1);
+    expect(await prisma.auditLog.count({ where: { action: 'tiktok_send_requested', targetId: retried.body.data.publishJobId, actorType: 'client' } })).toBe(1);
     expect(publisherMock.publishToTikTok).toHaveBeenCalledTimes(1);
   });
 
-  it('rolls back admin job creation when its creation audit fails and retries idempotently', async () => {
+  it('admin publish-jobs endpoint rejects TikTok platform with 409 since customer must use Send to TikTok', async () => {
+    publisherMock.publishToTikTok.mockClear();
     const binding = await prisma.accountBinding.findFirstOrThrow({ where: { clientId: clientAId } });
     const content = await prisma.content.create({ data: { clientId: clientAId, title: 'Admin audit rollback', description: 'test', videoUrl: 'mock/admin-audit.mp4', platforms: '["tiktok"]', status: 'delivered' } });
     const body = { content_id: content.id, account_binding_id: binding.id, platform: 'tiktok' };
-    await prisma.$executeRawUnsafe('CREATE TRIGGER force_admin_publish_audit_failure BEFORE INSERT ON "AuditLog" WHEN NEW.action = \'create_publish_job\' BEGIN SELECT RAISE(ABORT, \'forced admin audit rollback\'); END;');
-    try {
-      const failed = await request(app).post('/v1/publish-jobs').set('Authorization', `Bearer ${adminToken}`).send(body);
-      expect(failed.status).toBe(500);
-    } finally {
-      await prisma.$executeRawUnsafe('DROP TRIGGER IF EXISTS force_admin_publish_audit_failure');
-    }
-    expect(await prisma.publishJob.count({ where: { contentId: content.id, status: { in: ['pending', 'dispatched'] } } })).toBe(0);
-    expect(await prisma.publishJob.count({ where: { contentId: content.id, activeKey: { not: null } } })).toBe(0);
-    expect(await prisma.jobHistory.count({ where: { job: { contentId: content.id } } })).toBe(0);
-    expect(await prisma.auditLog.count({ where: { action: 'create_publish_job', targetType: 'publish_job' } })).toBe(0);
-
-    const retried = await request(app).post('/v1/publish-jobs').set('Authorization', `Bearer ${adminToken}`).send(body);
-    expect(retried.status).toBe(201);
-    expect(retried.body).toMatchObject({ status: 'dispatched', idempotent: false });
-    const duplicate = await request(app).post('/v1/publish-jobs').set('Authorization', `Bearer ${adminToken}`).send(body);
-    expect(duplicate.status).toBe(200);
-    expect(duplicate.body).toMatchObject({ job_id: retried.body.job_id, status: 'dispatched', idempotent: true });
-    expect(await prisma.publishJob.count({ where: { contentId: content.id } })).toBe(1);
-    expect(await prisma.jobHistory.count({ where: { jobId: retried.body.job_id } })).toBe(1);
-    expect(await prisma.auditLog.count({ where: { action: 'create_publish_job', targetId: retried.body.job_id } })).toBe(1);
+    const failed = await request(app).post('/v1/publish-jobs').set('Authorization', `Bearer ${adminToken}`).send(body);
+    expect(failed.status).toBe(409);
+    expect(failed.body.error.code).toBe('client_send_required');
+    expect(await prisma.publishJob.count({ where: { contentId: content.id } })).toBe(0);
+    expect(publisherMock.publishToTikTok).not.toHaveBeenCalled();
   });
 
-  it('creates only delivered admin jobs, dispatches immediate work, and keeps duplicate creation idempotent', async () => {
+  it('admin publish-jobs endpoint rejects TikTok platform for both approved and delivered content', async () => {
     const binding = await prisma.accountBinding.findFirstOrThrow({ where: { clientId: clientAId } });
     const approved = await prisma.content.create({ data: { clientId: clientAId, title: 'Approved admin job', description: 'test', videoUrl: 'mock/approved-job.mp4', platforms: '["tiktok"]', status: 'approved' } });
     const rejected = await request(app).post('/v1/publish-jobs').set('Authorization', `Bearer ${adminToken}`).send({ content_id: approved.id, account_binding_id: binding.id, platform: 'tiktok' });
     expect(rejected.status).toBe(409);
-    expect(rejected.body.error).toMatchObject({ code: 'invalid_state_transition', requestId: expect.any(String) });
+    expect(rejected.body.error.code).toBe('client_send_required');
 
     const content = await prisma.content.create({ data: { clientId: clientAId, title: 'Immediate admin job', description: 'test', videoUrl: 'mock/immediate-job.mp4', platforms: '["tiktok"]', status: 'delivered' } });
     const body = { content_id: content.id, account_binding_id: binding.id, platform: 'tiktok' };
-    const first = await request(app).post('/v1/publish-jobs').set('Authorization', `Bearer ${adminToken}`).send(body);
-    expect(first.status).toBe(201);
-    expect(first.body).toMatchObject({ status: 'dispatched', idempotent: false });
-    const jobId = first.body.job_id as string;
-    expect(await prisma.jobHistory.count({ where: { jobId } })).toBe(1);
-    expect(await prisma.auditLog.count({ where: { action: 'create_publish_job', targetId: jobId } })).toBe(1);
-
-    const second = await request(app).post('/v1/publish-jobs').set('Authorization', `Bearer ${adminToken}`).send(body);
-    expect(second.status).toBe(200);
-    expect(second.body).toMatchObject({ job_id: jobId, status: 'dispatched', idempotent: true });
-    expect(await prisma.publishJob.count({ where: { contentId: content.id, activeKey: `${content.id}:tiktok` } })).toBe(1);
-    expect(await prisma.jobHistory.count({ where: { jobId } })).toBe(1);
-    expect(await prisma.auditLog.count({ where: { action: 'create_publish_job', targetId: jobId } })).toBe(1);
-
-    const device = await request(app).post('/v1/client/register').set('Authorization', `Bearer ${clientAToken}`).send({ device_id: 'admin-dispatched-device' });
-    const queue = await request(app).get('/v1/client/queue').set('Authorization', `Bearer ${device.body.device_token}`);
-    const queued = queue.body.queue.find((item: { job_id: string }) => item.job_id === jobId);
-    expect(queued).toBeDefined();
-    expect((await prisma.publishJob.findUniqueOrThrow({ where: { id: jobId } })).status).toBe('client_confirmed');
-    expect((await request(app).post(`/v1/tasks/${jobId}/status`).set('Authorization', `Bearer ${queued.job_token}`).send({ status: 'published' })).status).toBe(200);
-    expect((await prisma.publishJob.findUniqueOrThrow({ where: { id: jobId } })).status).toBe('published');
-    expect((await prisma.content.findUniqueOrThrow({ where: { id: content.id } })).status).toBe('published');
+    const result = await request(app).post('/v1/publish-jobs').set('Authorization', `Bearer ${adminToken}`).send(body);
+    expect(result.status).toBe(409);
+    expect(result.body.error.code).toBe('client_send_required');
   });
 
-  it('keeps future administrator publish jobs pending', async () => {
+  it('future scheduled TikTok jobs are also rejected by admin endpoint', async () => {
     const binding = await prisma.accountBinding.findFirstOrThrow({ where: { clientId: clientAId } });
     const content = await prisma.content.create({ data: { clientId: clientAId, title: 'Future admin job', description: 'test', videoUrl: 'mock/future-job.mp4', platforms: '["tiktok"]', status: 'delivered' } });
     const scheduledAt = new Date(Date.now() + 6 * 60_000).toISOString();
     const result = await request(app).post('/v1/publish-jobs').set('Authorization', `Bearer ${adminToken}`).send({ content_id: content.id, account_binding_id: binding.id, platform: 'tiktok', schedule_at: scheduledAt });
-    expect(result.status).toBe(201);
-    expect(result.body).toMatchObject({ status: 'pending', idempotent: false });
-    expect(await prisma.jobHistory.count({ where: { jobId: result.body.job_id, status: 'pending' } })).toBe(1);
+    expect(result.status).toBe(409);
+    expect(result.body.error.code).toBe('client_send_required');
   });
 
   it('enforces content lifecycle transitions and rejects terminal creation', async () => {
@@ -417,7 +358,7 @@ describe('Phase 1B state machines and task replay protection', () => {
     expect(publisherMock.publishToTikTok).toHaveBeenCalledTimes(1);
   });
 
-  it('claims a device task without storing bearer tokens and consumes it exactly once', async () => {
+  it('device task claims work but TikTok task completion is blocked with 409', async () => {
     const binding = await prisma.accountBinding.findFirstOrThrow({ where: { clientId: clientAId } });
     const taskContent = await prisma.content.create({ data: { clientId: clientAId, title: 'Device task', description: 'test', videoUrl: 'mock/task.mp4', platforms: '[\"tiktok\"]', status: 'delivered' } });
     const taskJob = await prisma.publishJob.create({ data: { contentId: taskContent.id, accountBindingId: binding.id, platform: 'tiktok', status: 'dispatched', activeKey: `${taskContent.id}:tiktok` } });
@@ -433,40 +374,26 @@ describe('Phase 1B state machines and task replay protection', () => {
     expect(claimed.jobToken).not.toBe(queued.job_token);
 
     const result = await request(app).post(`/v1/tasks/${taskJob.id}/status`).set('Authorization', `Bearer ${queued.job_token}`).send({ status: 'published' });
-    expect(result.status).toBe(200);
-    const replay = await request(app).post(`/v1/tasks/${taskJob.id}/status`).set('Authorization', `Bearer ${queued.job_token}`).send({ status: 'failed' });
-    expect(replay.status).toBe(409);
-    const completed = await prisma.publishJob.findUniqueOrThrow({ where: { id: taskJob.id } });
-    expect(completed).toMatchObject({ status: 'published', activeKey: null, taskTokenConsumedAt: expect.any(Date) });
-    expect((await prisma.content.findUniqueOrThrow({ where: { id: taskContent.id } })).status).toBe('published');
-    expect(await prisma.jobHistory.count({ where: { jobId: taskJob.id, status: 'published' } })).toBe(1);
+    expect(result.status).toBe(409);
+    expect(result.body.error.code).toBe('official_tiktok_status_required');
   });
 
-  it('rejects each invalid callback state and forged task binding without writes', async () => {
+  it('TikTok task callback is blocked with 409 regardless of token validity', async () => {
     const { issueToken } = await import('../src/routes/auth');
     const binding = await prisma.accountBinding.findFirstOrThrow({ where: { clientId: clientAId } });
     const content = await prisma.content.create({ data: { clientId: clientAId, title: 'Guarded task', description: 'test', videoUrl: 'mock/guarded.mp4', platforms: '[\"tiktok\"]', status: 'delivered' } });
     const job = await prisma.publishJob.create({ data: { contentId: content.id, accountBindingId: binding.id, platform: 'tiktok', status: 'client_confirmed', activeKey: `${content.id}:tiktok`, taskTokenJti: 'expected-jti', taskTokenExpiresAt: new Date(Date.now() + 60_000), taskDeviceId: 'expected-device' } });
     const token = issueToken({ tokenType: 'task', sub: job.id, jobId: job.id, deviceId: 'expected-device', clientId: clientAId, role: 'task' }, '1h');
-    for (const status of ['pending', 'dispatched', 'client_confirmed', 'uploading', 'publishing', 'cancelled', 'unknown']) {
-      expect((await request(app).post(`/v1/tasks/${job.id}/status`).set('Authorization', `Bearer ${token}`).send({ status })).status).toBe(422);
+    for (const status of ['published', 'failed']) {
+      expect((await request(app).post(`/v1/tasks/${job.id}/status`).set('Authorization', `Bearer ${token}`).send({ status })).status).toBe(409);
     }
     const beforeHistory = await prisma.jobHistory.count({ where: { jobId: job.id } });
-    const beforeAudit = await prisma.auditLog.count({ where: { targetId: job.id } });
-    const wrongJti = issueToken({ tokenType: 'task', sub: job.id, jobId: job.id, deviceId: 'expected-device', clientId: clientAId, role: 'task' }, '1h');
-    expect((await request(app).post(`/v1/tasks/${job.id}/status`).set('Authorization', `Bearer ${wrongJti}`).send({ status: 'published' })).status).toBe(403);
-    const wrongDevice = issueToken({ tokenType: 'task', sub: job.id, jobId: job.id, deviceId: 'other-device', clientId: clientAId, role: 'task' }, '1h');
-    expect((await request(app).post(`/v1/tasks/${job.id}/status`).set('Authorization', `Bearer ${wrongDevice}`).send({ status: 'published' })).status).toBe(403);
-    const wrongClient = issueToken({ tokenType: 'task', sub: job.id, jobId: job.id, deviceId: 'expected-device', clientId: clientBId, role: 'task' }, '1h');
-    expect((await request(app).post(`/v1/tasks/${job.id}/status`).set('Authorization', `Bearer ${wrongClient}`).send({ status: 'published' })).status).toBe(403);
-    expect((await request(app).post(`/v1/tasks/not-the-job/status`).set('Authorization', `Bearer ${token}`).send({ status: 'published' })).status).toBe(403);
     expect(await prisma.jobHistory.count({ where: { jobId: job.id } })).toBe(beforeHistory);
-    expect(await prisma.auditLog.count({ where: { targetId: job.id } })).toBe(beforeAudit);
     expect((await prisma.publishJob.findUniqueOrThrow({ where: { id: job.id } })).status).toBe('client_confirmed');
     expect((await prisma.content.findUniqueOrThrow({ where: { id: content.id } })).status).toBe('delivered');
   });
 
-  it('atomically records a failed callback and prevents its replay', async () => {
+  it('TikTok task callback is blocked with 409 for failed status too', async () => {
     const binding = await prisma.accountBinding.findFirstOrThrow({ where: { clientId: clientAId } });
     const content = await prisma.content.create({ data: { clientId: clientAId, title: 'Failed task', description: 'test', videoUrl: 'mock/failed.mp4', platforms: '[\"tiktok\"]', status: 'delivered' } });
     const job = await prisma.publishJob.create({ data: { contentId: content.id, accountBindingId: binding.id, platform: 'tiktok', status: 'dispatched', activeKey: `${content.id}:tiktok` } });
@@ -474,20 +401,11 @@ describe('Phase 1B state machines and task replay protection', () => {
     const queue = await request(app).get('/v1/client/queue').set('Authorization', `Bearer ${device.body.device_token}`);
     const entry = queue.body.queue.find((item: { job_id: string }) => item.job_id === job.id);
     const first = await request(app).post(`/v1/tasks/${job.id}/status`).set('Authorization', `Bearer ${entry.job_token}`).send({ status: 'failed', error: { code: 'mock_failure', message: 'mock failure', retryable: true } });
-    expect(first.status).toBe(200);
-    const completed = await prisma.publishJob.findUniqueOrThrow({ where: { id: job.id } });
-    expect(completed).toMatchObject({ status: 'failed', activeKey: null, errorCode: 'mock_failure', errorMessage: 'mock failure', taskTokenConsumedAt: expect.any(Date), failedAt: expect.any(Date) });
-    expect((await prisma.content.findUniqueOrThrow({ where: { id: content.id } })).status).toBe('failed');
-    const histories = await prisma.jobHistory.count({ where: { jobId: job.id, status: 'failed' } });
-    const audits = await prisma.auditLog.count({ where: { targetId: job.id } });
-    const replay = await request(app).post(`/v1/tasks/${job.id}/status`).set('Authorization', `Bearer ${entry.job_token}`).send({ status: 'published' });
-    expect(replay.status).toBe(409);
-    expect(replay.body.error.code).toBe('task_token_consumed');
-    expect(await prisma.jobHistory.count({ where: { jobId: job.id, status: 'failed' } })).toBe(histories);
-    expect(await prisma.auditLog.count({ where: { targetId: job.id } })).toBe(audits);
+    expect(first.status).toBe(409);
+    expect(first.body.error.code).toBe('official_tiktok_status_required');
   });
 
-  it('reissues only expired unconsumed device tokens and invalidates the old token', async () => {
+  it('reissues expired device tokens and TikTok task completion is blocked with 409', async () => {
     const binding = await prisma.accountBinding.findFirstOrThrow({ where: { clientId: clientAId } });
     const content = await prisma.content.create({ data: { clientId: clientAId, title: 'Reissue task', description: 'test', videoUrl: 'mock/reissue.mp4', platforms: '[\"tiktok\"]', status: 'delivered' } });
     const job = await prisma.publishJob.create({ data: { contentId: content.id, accountBindingId: binding.id, platform: 'tiktok', status: 'dispatched', activeKey: `${content.id}:tiktok` } });
@@ -503,8 +421,7 @@ describe('Phase 1B state machines and task replay protection', () => {
     const secondDb = await prisma.publishJob.findUniqueOrThrow({ where: { id: job.id } });
     expect(second).toBeDefined();
     expect(secondDb.taskTokenJti).not.toBe(firstDb.taskTokenJti);
-    expect((await request(app).post(`/v1/tasks/${job.id}/status`).set('Authorization', `Bearer ${first.job_token}`).send({ status: 'published' })).status).toBe(403);
-    expect((await request(app).post(`/v1/tasks/${job.id}/status`).set('Authorization', `Bearer ${second.job_token}`).send({ status: 'published' })).status).toBe(200);
+    expect((await request(app).post(`/v1/tasks/${job.id}/status`).set('Authorization', `Bearer ${second.job_token}`).send({ status: 'published' })).status).toBe(409);
   });
 
   it('only permits cancellation before publishing begins', async () => {

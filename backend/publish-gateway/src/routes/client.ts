@@ -64,6 +64,13 @@ router.post('/register', authenticateToken, requireClient, async (req, res) => {
     res.status(400).json({ error: 'device_id required' });
     return;
   }
+  const existingDevice = await prisma.device.findUnique({
+    where: { deviceId: device_id },
+    select: { clientId: true },
+  });
+  if (existingDevice?.clientId && existingDevice.clientId !== clientId) {
+    throw new AppError(409, 'device_tenant_mismatch', 'Device is already registered to another customer');
+  }
 
   const token = issueToken({ tokenType: 'device', sub: device_id, deviceId: device_id, clientId, role: 'device' }, '7d');
 
@@ -95,10 +102,11 @@ router.get('/queue', authenticateToken, requireDevice, async (req, res) => {
   const { deviceId, clientId } = auth;
   
   // Update heartbeat
-  await prisma.device.update({
-    where: { deviceId },
+  const heartbeat = await prisma.device.updateMany({
+    where: { deviceId, clientId },
     data: { lastSeen: new Date(), online: true }
   });
+  if (heartbeat.count !== 1) throw new AppError(403, 'device_tenant_mismatch', 'Device registration does not match token');
 
   // Find jobs for this client's active account bindings
   const jobs = await prisma.publishJob.findMany({
@@ -182,14 +190,15 @@ router.post('/heartbeat', authenticateToken, requireDevice, async (req, res) => 
   const { deviceId } = auth;
   const { status, capabilities, active_sessions } = req.body;
   
-  await prisma.device.update({
-    where: { deviceId },
+  const heartbeat = await prisma.device.updateMany({
+    where: { deviceId, clientId: auth.clientId },
     data: {
       lastSeen: new Date(),
       online: status === 'online',
       capabilities: JSON.stringify(capabilities || []),
     }
   });
+  if (heartbeat.count !== 1) throw new AppError(403, 'device_tenant_mismatch', 'Device registration does not match token');
 
   res.json({ ok: true, timestamp: new Date().toISOString() });
 });

@@ -96,6 +96,8 @@ model Content {
   bannedWordsCheckedAt    DateTime?
   aiDisclosureConfirmed   Boolean              @default(false)
   aiDisclosureConfirmedAt DateTime?
+  clientConfirmedAt       DateTime?
+  clientConfirmedBy       String?
   publishLogs             PublishLog[]
   performanceMetrics      PerformanceMetrics[]
 }
@@ -134,38 +136,59 @@ enum JobStatus {
 }
 
 model PublishJob {
-  id                  String               @id @default(cuid())
-  contentId           String
-  content             Content              @relation(fields: [contentId], references: [id])
-  accountBindingId    String
-  accountBinding      AccountBinding       @relation(fields: [accountBindingId], references: [id])
-  platform            String
-  status              JobStatus            @default(pending)
-  scheduleAt          DateTime?
-  publishOptions      String? // JSON string: platform-specific options
-  clientToken         String? // short-lived token for client app
-  jobToken            String? // one-time token for status callback
-  activeKey           String?              @unique
-  taskTokenJti        String?              @unique
-  taskTokenExpiresAt  DateTime?
-  taskTokenConsumedAt DateTime?
-  taskDeviceId        String?
-  platformPostId      String?
-  platformPostUrl     String?
-  publishId           String?
-  publishedAt         DateTime?
-  failedAt            DateTime?
-  errorCode           String?
-  errorDetail         String?
-  errorMessage        String?
-  retryable           Boolean              @default(false)
-  retryCount          Int                  @default(0)
-  deviceFingerprint   String?
-  screenshotUrl       String?
-  createdAt           DateTime             @default(now())
-  updatedAt           DateTime             @updatedAt
-  history             JobHistory[]
-  performanceMetrics  PerformanceMetrics[]
+  id                        String               @id @default(cuid())
+  contentId                 String
+  content                   Content              @relation(fields: [contentId], references: [id])
+  accountBindingId          String
+  accountBinding            AccountBinding       @relation(fields: [accountBindingId], references: [id])
+  platform                  String
+  status                    JobStatus            @default(pending)
+  scheduleAt                DateTime?
+  publishOptions            String? // JSON string: platform-specific options
+  clientToken               String? // short-lived token for client app
+  jobToken                  String? // one-time token for status callback
+  activeKey                 String?              @unique
+  taskTokenJti              String?              @unique
+  taskTokenExpiresAt        DateTime?
+  taskTokenConsumedAt       DateTime?
+  taskDeviceId              String?
+  platformPostId            String?
+  platformPostUrl           String?
+  publishId                 String?              @unique
+  publishedAt               DateTime?
+  failedAt                  DateTime?
+  errorCode                 String?
+  errorDetail               String?
+  errorMessage              String?
+  retryable                 Boolean              @default(false)
+  retryCount                Int                  @default(0)
+  deviceFingerprint         String?
+  screenshotUrl             String?
+  deliveryStage             String               @default("send_requested")
+  sendRequestedAt           DateTime?
+  finalCaption              String?
+  aiDisclosureRequired      Boolean              @default(false)
+  aiDisclosureMethod        String?
+  initializationAttemptedAt DateTime?
+  uploadUrl                 String?
+  uploadExpiresAt           DateTime?
+  uploadedBytes             Int                  @default(0)
+  uploadCompletedAt         DateTime?
+  inboxDeliveredAt          DateTime?
+  lastPlatformStatus        String?
+  lastStatusCheckedAt       DateTime?
+  nextStatusCheckAt         DateTime?
+  statusCheckFailures       Int                  @default(0)
+  lastStatusError           String?
+  workerLeaseToken          String?
+  workerLeaseUntil          DateTime?
+  createdAt                 DateTime             @default(now())
+  updatedAt                 DateTime             @updatedAt
+  history                   JobHistory[]
+  performanceMetrics        PerformanceMetrics[]
+
+  @@index([status, nextStatusCheckAt])
+  @@index([deliveryStage, workerLeaseUntil])
 }
 
 model PerformanceMetrics {

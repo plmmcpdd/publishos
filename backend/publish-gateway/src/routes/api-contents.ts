@@ -2,8 +2,7 @@ import { Router } from 'express';
 import { prisma } from '../lib/prisma';
 import { authenticateToken, clientIdFromAuth, requireAdmin } from '../middleware/auth';
 import { AppError } from '../middleware/errors';
-import { createOrGetActivePublishJob, transitionContent } from '../domain/publishing-state';
-import { publishToTikTok } from '../services/publisher';
+import { transitionContent } from '../domain/publishing-state';
 
 const router = Router();
 
@@ -61,33 +60,13 @@ router.get('/', authenticateToken, async (req, res) => {
 });
 
 router.post('/:id/publish', authenticateToken, requireAdmin, async (req, res) => {
-  try {
-    const id = String(req.params.id);
-    const content = await prisma.content.findUnique({ where: { id } });
-    if (!content) throw new AppError(404, 'not_found', 'Content not found');
-    const binding = await prisma.accountBinding.findFirst({
-      where: { clientId: content.clientId, platform: 'tiktok', active: true, status: 'active', accessToken: { not: null } },
-      orderBy: { updatedAt: 'desc' },
-    });
-    if (!binding) throw new AppError(409, 'invalid_state_transition', 'Content requires an active TikTok account binding');
-    const { job, created } = await prisma.$transaction((tx) => createOrGetActivePublishJob(tx, {
-      contentId: content.id, accountBindingId: binding.id, platform: 'tiktok', dispatchWhenImmediate: false,
-      changedBy: req.auth!.sub, createdNotes: 'Server publishing requested by legacy API',
-      auditOnCreate: (jobId) => ({
-        action: 'publish_requested', actorId: req.auth!.sub, actorType: 'user', targetType: 'content', targetId: content.id,
-        details: JSON.stringify({ jobId, bindingId: binding.id, source: 'legacy' }),
-      }),
-    }));
-
-    if (created) {
-      publishToTikTok(job.id).catch((error) => console.error(`TikTok publish job ${job.id} failed`, error));
-    }
-
-    res.json({ data: { ...serializeContent(content), publishJobId: job.id, publishing: true, idempotent: !created } });
-  } catch (error) {
-    if (error instanceof AppError) throw error;
-    throw error;
-  }
+  res.setHeader('Deprecation', 'true');
+  res.setHeader('Link', '</v1/content/{id}/send-to-tiktok>; rel="successor-version"');
+  throw new AppError(
+    410,
+    'client_send_required',
+    'Administrator-triggered TikTok publishing is disabled. The customer must use Send to TikTok.',
+  );
 });
 
 router.post('/:id/approve', authenticateToken, requireAdmin, async (req, res) => {

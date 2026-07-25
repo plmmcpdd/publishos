@@ -42,7 +42,18 @@ export async function transitionJob(tx: Prisma.TransactionClient, id: string, fr
     throw invalidTransition('publish_job', current.status, to);
   }
 }
-export async function createActiveJob(tx: Prisma.TransactionClient, input: { contentId: string; accountBindingId: string; platform: string; scheduleAt?: Date | null; publishOptions?: string | null; }) {
+export async function createActiveJob(tx: Prisma.TransactionClient, input: {
+  contentId: string;
+  accountBindingId: string;
+  platform: string;
+  scheduleAt?: Date | null;
+  publishOptions?: string | null;
+  deliveryStage?: string;
+  sendRequestedAt?: Date | null;
+  finalCaption?: string | null;
+  aiDisclosureRequired?: boolean;
+  aiDisclosureMethod?: string | null;
+}) {
   const activeKey = `${input.contentId}:${input.platform}`;
   const existing = await tx.publishJob.findUnique({ where: { activeKey } });
   if (existing) return { job: existing, created: false };
@@ -55,6 +66,11 @@ export async function createActiveJob(tx: Prisma.TransactionClient, input: { con
       publishOptions: input.publishOptions,
       status: 'pending',
       activeKey,
+      deliveryStage: input.deliveryStage || 'send_requested',
+      sendRequestedAt: input.sendRequestedAt,
+      finalCaption: input.finalCaption,
+      aiDisclosureRequired: input.aiDisclosureRequired ?? false,
+      aiDisclosureMethod: input.aiDisclosureMethod,
     } });
     return { job, created: true };
   } catch (error: any) {
@@ -75,6 +91,11 @@ export async function createOrGetActivePublishJob(tx: Prisma.TransactionClient, 
   platform: string;
   scheduleAt?: Date | null;
   publishOptions?: string | null;
+  deliveryStage?: string;
+  sendRequestedAt?: Date | null;
+  finalCaption?: string | null;
+  aiDisclosureRequired?: boolean;
+  aiDisclosureMethod?: string | null;
   dispatchWhenImmediate: boolean;
   changedBy?: string;
   createdNotes?: string;

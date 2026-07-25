@@ -25,7 +25,9 @@ router.post('/login', async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) return res.status(400).json({ success: false, error: 'Email and password required' });
   const client = await prisma.client.findUnique({ where: { email } });
-  if (!client || !await bcrypt.compare(password, client.password)) return res.status(401).json({ success: false, error: 'Invalid credentials' });
+  if (!client || !client.active || !await bcrypt.compare(password, client.password)) {
+    return res.status(401).json({ success: false, error: 'Invalid credentials' });
+  }
   const token = issueToken({ tokenType: 'client', sub: client.id, clientId: client.id, role: 'client' }, '8h');
   res.json({ success: true, data: { token, client: { id: client.id, name: client.name, industry: client.industry } } });
 });

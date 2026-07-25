@@ -41,6 +41,9 @@ async function profile(accessToken: string, openId: string): Promise<string> {
   catch { return `TikTok User ${openId.slice(-8)}`; }
 }
 async function saveBinding(input: { clientId: string; username: string; openId: string; token: string; refreshToken?: string; expiresIn: number; scope?: string }) {
+  if (input.scope && !input.scope.split(/[,\s]+/u).includes('video.upload')) {
+    throw new AppError(409, 'oauth_scope_missing', 'TikTok authorization did not grant video.upload');
+  }
   await prisma.$transaction(async (tx) => {
     const data = { accountUsername: input.username, username: input.username, platformUserId: input.openId, accessToken: input.token, refreshToken: input.refreshToken || null, expiresAt: new Date(Date.now() + input.expiresIn * 1000), scope: input.scope || null, status: 'active', active: true };
     await tx.accountBinding.upsert({ where: { clientId_platform_accountUsername: { clientId: input.clientId, platform: 'tiktok', accountUsername: input.username } }, update: data, create: { clientId: input.clientId, platform: 'tiktok', ...data } });
@@ -70,6 +73,6 @@ router.get('/tiktok/callback', rateLimit('oauth_browser_callback', 30, 10 * 60_0
     const nonce = callbackSecurityHeaders(res); res.type('html').send(`<html><body style="font-family:sans-serif;text-align:center;padding:50px"><h1>TikTok Connected!</h1><p>Account: @${escapeHtml(username)}</p><p>You can close this window and return to PublishOS.</p><script nonce="${escapeHtml(nonce)}">setTimeout(function(){window.close()},3000)</script></body></html>`);
   } catch (error) { next(error); }
 });
-router.get('/tiktok/bindings/:clientId', authenticateToken, async (req, res, next) => { try { const clientId = clientIdFromAuth(req, req.params.clientId); const data = await prisma.accountBinding.findMany({ where: { clientId: clientId!, platform: 'tiktok', active: true }, select: { id: true, platform: true, accountUsername: true, username: true, platformUserId: true, status: true, active: true, expiresAt: true, createdAt: true }, orderBy: { createdAt: 'desc' } }); res.json({ success: true, data }); } catch (error) { next(error); } });
+router.get('/tiktok/bindings/:clientId', authenticateToken, async (req, res, next) => { try { const clientId = clientIdFromAuth(req, req.params.clientId); const data = await prisma.accountBinding.findMany({ where: { clientId: clientId!, platform: 'tiktok' }, select: { id: true, platform: true, accountUsername: true, username: true, platformUserId: true, status: true, active: true, expiresAt: true, createdAt: true }, orderBy: { createdAt: 'desc' }, take: 20 }); res.json({ success: true, data }); } catch (error) { next(error); } });
 router.delete('/tiktok/bindings/:id', authenticateToken, async (req, res, next) => { try { if (req.auth?.tokenType !== 'admin' && req.auth?.tokenType !== 'client') throw new AppError(403, 'forbidden', 'Insufficient permissions'); const binding = await prisma.accountBinding.findFirst({ where: { id: String(req.params.id), ...(req.auth.tokenType === 'client' ? { clientId: req.auth.clientId } : {}) } }); if (!binding) throw new AppError(404, 'not_found', 'Binding not found'); await prisma.accountBinding.update({ where: { id: binding.id }, data: { active: false, status: 'revoked' } }); res.json({ success: true }); } catch (error) { next(error); } });
 export default router;

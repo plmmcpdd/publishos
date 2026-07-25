@@ -24,6 +24,13 @@ router.post('/:id/status', authenticateToken, requireTask, async (req, res) => {
   await prisma.$transaction(async (tx) => {
     const job = await tx.publishJob.findUnique({ where: { id: jobId }, include: { content: true, accountBinding: true } });
     if (!job) throw new AppError(404, 'not_found', 'Job not found');
+    if (job.platform === 'tiktok') {
+      throw new AppError(
+        409,
+        'official_tiktok_status_required',
+        'TikTok completion is accepted only from the official TikTok status API',
+      );
+    }
     if (job.taskTokenConsumedAt) throw new AppError(409, 'task_token_consumed', 'Task token has already been consumed');
     if (!job.taskTokenExpiresAt || job.taskTokenExpiresAt <= new Date()) throw new AppError(401, 'task_token_expired', 'Task token has expired');
     if (job.taskTokenJti !== auth.jti || job.taskDeviceId !== auth.deviceId || job.content.clientId !== auth.clientId || job.accountBinding.clientId !== auth.clientId) throw new AppError(403, 'forbidden', 'Task token binding does not match job');
@@ -39,7 +46,28 @@ router.post('/:id/status', authenticateToken, requireTask, async (req, res) => {
 });
 
 router.get('/:id', authenticateToken, requireAdmin, async (req, res) => {
-  const job = await prisma.publishJob.findUnique({ where: { id: String(req.params.id) }, include: { content: { include: { assets: true } }, accountBinding: true, history: { orderBy: { changedAt: 'desc' } } } });
+  const job = await prisma.publishJob.findUnique({
+    where: { id: String(req.params.id) },
+    include: {
+      content: { include: { assets: true } },
+      accountBinding: {
+        select: {
+          id: true,
+          clientId: true,
+          platform: true,
+          accountUsername: true,
+          platformUserId: true,
+          username: true,
+          status: true,
+          active: true,
+          expiresAt: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      },
+      history: { orderBy: { changedAt: 'desc' } },
+    },
+  });
   if (!job) throw new AppError(404, 'not_found', 'Job not found');
   res.json(job);
 });

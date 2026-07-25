@@ -19,6 +19,7 @@ import { authenticateToken, requireAdmin } from './middleware/auth';
 import mediaRoutes from './routes/media';
 import { corsSecurity, rateLimit } from './middleware/http-security';
 import { loadHttpSecurityConfig } from './config/security';
+import { prisma } from './lib/prisma';
 
 const deprecated = (_req: express.Request, res: express.Response, next: express.NextFunction) => {
   res.setHeader('Deprecation', 'true');
@@ -34,7 +35,15 @@ export function createApp() {
   app.use(corsSecurity());
   app.use(express.json());
   app.use(languageMiddleware);
-  app.get('/health', (_req, res) => res.json({ status: 'ok', version: '0.1.0' }));
+  app.get('/health', (_req, res) => res.json({ status: 'ok', version: '1.0.0' }));
+  app.get('/ready', async (_req, res) => {
+    try {
+      await prisma.$queryRaw`SELECT 1`;
+      res.json({ status: 'ready', database: true, version: '1.0.0' });
+    } catch {
+      res.status(503).json({ status: 'not_ready', database: false, version: '1.0.0' });
+    }
+  });
   app.use('/v1/auth', rateLimit('login', 10, 15 * 60_000), authRoutes);
   app.use('/v1', mediaRoutes);
   app.use('/v1', tiktokRoutes);

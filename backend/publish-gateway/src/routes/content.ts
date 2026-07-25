@@ -1,12 +1,17 @@
-import { Router } from 'express';
+import { Router, type Request, type Response } from 'express';
+import crypto from 'node:crypto';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma';
 import { publishToTikTok } from '../services/publisher';
 import { authenticateToken, clientIdFromAuth, requireAdmin, requireClient } from '../middleware/auth';
 import { AppError, sendInternalError } from '../middleware/errors';
 import { createOrGetActivePublishJob, transitionContent } from '../domain/publishing-state';
+import { signedMediaUrl } from '../services/media-signing';
+import { buildTikTokDeliveryContract, normalizeHashtags } from '../services/tiktok-content';
+import { deliveryMessage, deriveDeliveryState } from '../services/publishing-view';
 
 const router = Router();
+const clientVisibleStatuses = ['delivered', 'failed', 'published'] as const;
 const safeClient = { id: true, name: true, email: true, industry: true, active: true, createdAt: true, updatedAt: true } as const;
 const safeAccountBinding = {
   id: true, clientId: true, platform: true, accountUsername: true, platformUserId: true,
@@ -16,6 +21,9 @@ const safePublishJob = {
   id: true, contentId: true, accountBindingId: true, platform: true, status: true, scheduleAt: true,
   publishId: true, platformPostId: true, platformPostUrl: true, publishedAt: true, failedAt: true,
   errorCode: true, errorMessage: true, retryable: true, retryCount: true, createdAt: true, updatedAt: true,
+  deliveryStage: true, sendRequestedAt: true, finalCaption: true, aiDisclosureRequired: true,
+  aiDisclosureMethod: true, uploadCompletedAt: true, inboxDeliveredAt: true, lastPlatformStatus: true,
+  lastStatusCheckedAt: true, nextStatusCheckAt: true, statusCheckFailures: true, lastStatusError: true,
   accountBinding: { select: safeAccountBinding },
 } as const;
 
@@ -34,6 +42,8 @@ const createContentSchema = z.object({
   ai_generated: z.boolean().optional(),
   aiTools: z.array(z.string()).optional(),
   ai_tools: z.array(z.string()).optional(),
+  aiDisclosureConfirmed: z.boolean().optional(),
+  ai_disclosure_confirmed: z.boolean().optional(),
   platform: z.string().optional(),
   platforms: z.array(z.string()).optional(),
   scheduleAt: z.string().datetime().optional(),
@@ -52,6 +62,14 @@ const createContentSchema = z.object({
   message: 'clientId is required',
 });
 
+const sendToTikTokSchema = z.object({
+  clientId: z.string().optional(),
+  deviceId: z.string().max(200).optional(),
+  accountBindingId: z.string().optional(),
+  contentConfirmed: z.literal(true),
+  aiDisclosureAcknowledged: z.boolean().optional(),
+});
+
 // Strip sensitive fields from client objects in responses
 function sanitizeClient(client: any) {
   if (!client) return client;
@@ -67,14 +85,47 @@ function sanitizeContent(content: any) {
   };
 }
 
-function serializeContent(content: any) {
+function serializeContent(content: any, audience = 'content') {
   if (!content) return content;
-  // Include latest publish job error if available
   const latestJob = content.publishJobs?.[0];
+  let hashtags: string[] = [];
+  try {
+    hashtags = normalizeHashtags(content.hashtags || '');
+  } catch {
+    hashtags = [];
+  }
+  let contract: ReturnType<typeof buildTikTokDeliveryContract> | undefined;
+  try {
+    contract = buildTikTokDeliveryContract(content);
+  } catch {
+    contract = undefined;
+  }
+  const deliveryState = deriveDeliveryState(content, latestJob);
+  const video = content.videoUrl ? signedMediaUrl(content.videoUrl, `${audience}:video:${content.id}`).url : null;
+  const thumbnail = content.thumbnailUrl
+    ? signedMediaUrl(content.thumbnailUrl, `${audience}:thumbnail:${content.id}`).url
+    : null;
   return sanitizeContent({
     ...content,
     platform: firstPlatform(content.platforms),
-    thumbnail_url: content.thumbnailUrl,
+    videoUrl: video,
+    thumbnailUrl: thumbnail,
+    thumbnail_url: thumbnail,
+    hashtags,
+    finalCaption: latestJob?.finalCaption || contract?.finalCaption || (content.caption || content.description),
+    aiDisclosure: {
+      required: latestJob?.aiDisclosureRequired ?? Boolean(content.aiGenerated),
+      internalReviewConfirmed: Boolean(content.aiDisclosureConfirmed),
+      method: latestJob?.aiDisclosureMethod || contract?.aiDisclosureMethod || 'customer_confirms_in_tiktok_app',
+      apiAutomaticallyApplied: false,
+      instruction: content.aiGenerated
+        ? 'Turn on the AI-generated content label in the TikTok App before the final post.'
+        : 'No AI-generated content label is required by PublishOS.',
+    },
+    deliveryState,
+    deliveryMessage: deliveryMessage(deliveryState),
+    canRetry: latestJob?.status === 'failed' && Boolean(latestJob.retryable),
+    latestPublishJob: latestJob || null,
     publishError: latestJob?.errorMessage || null,
     publishJobStatus: latestJob?.status || null,
   });
@@ -139,8 +190,14 @@ router.post('/', authenticateToken, requireAdmin, async (req, res) => {
   }
 
   const platformList = data.platforms?.length ? data.platforms : [data.platform || 'tiktok'];
-  const videoUrl = data.videoUrl || data.video_url || 'mock/video.mp4';
+  const videoUrl = data.videoUrl || data.video_url || (process.env.NODE_ENV === 'test' ? 'mock/video.mp4' : '');
+  if (!videoUrl) {
+    res.status(422).json({ success: false, error: 'A private uploaded video is required' });
+    return;
+  }
   const scheduleAt = data.scheduleAt || data.schedule_at;
+  const aiGenerated = data.aiGenerated ?? data.ai_generated ?? false;
+  const aiDisclosureConfirmed = data.aiDisclosureConfirmed ?? data.ai_disclosure_confirmed ?? false;
 
   const content = await prisma.content.create({
     data: {
@@ -151,12 +208,14 @@ router.post('/', authenticateToken, requireAdmin, async (req, res) => {
       hashtags: JSON.stringify(data.hashtags || []),
       videoUrl,
       thumbnailUrl: data.thumbnailUrl || data.thumbnail_url,
-      aiGenerated: data.aiGenerated ?? data.ai_generated ?? false,
+      aiGenerated,
       aiTools: JSON.stringify(data.aiTools || data.ai_tools || []),
       platforms: JSON.stringify(platformList),
       scheduleAt: scheduleAt ? new Date(scheduleAt) : null,
       metadata: data.metadata ? JSON.stringify(data.metadata) : null,
       status: data.status || 'draft',
+      aiDisclosureConfirmed,
+      aiDisclosureConfirmedAt: aiDisclosureConfirmed ? new Date() : null,
       assets: {
         create: (data.assets || []).map((asset) => ({
           type: asset.type,
@@ -179,7 +238,7 @@ router.post('/', authenticateToken, requireAdmin, async (req, res) => {
     details: JSON.stringify({ title: data.title, clientId }),
   });
 
-  res.status(201).json({ success: true, data: serializeContent(content) });
+  res.status(201).json({ success: true, data: serializeContent(content, 'admin') });
 });
 
 router.get('/', authenticateToken, async (req, res) => {
@@ -191,9 +250,14 @@ router.get('/', authenticateToken, async (req, res) => {
       : undefined;
 
   const scopedClientId = clientIdFromAuth(req, clientId);
+  const clientRequest = req.auth?.tokenType === 'client';
   const contents = await prisma.content.findMany({
     where: {
-      ...(status ? { status: statusFilter(status) } : {}),
+      ...(clientRequest
+        ? { status: { in: [...clientVisibleStatuses] } }
+        : status
+          ? { status: statusFilter(status) }
+          : {}),
       ...(scopedClientId ? { clientId: scopedClientId } : {}),
     },
     include: { assets: true, client: { select: safeClient }, publishJobs: { select: safePublishJob, orderBy: { createdAt: 'desc' } } },
@@ -201,7 +265,10 @@ router.get('/', authenticateToken, async (req, res) => {
     take: 100,
   });
 
-  res.json({ success: true, data: contents.map(serializeContent) });
+  res.json({
+    success: true,
+    data: contents.map((content) => serializeContent(content, clientRequest ? `client:${scopedClientId}` : 'admin')),
+  });
 });
 
 // Must be registered before /:id.
@@ -219,21 +286,37 @@ router.get('/delivered', authenticateToken, async (req, res) => {
         status: 'delivered',
         ...(scopedClientId ? { clientId: scopedClientId } : {}),
       },
-      include: { client: { select: safeClient } },
+      include: {
+        client: { select: safeClient },
+        publishJobs: { select: safePublishJob, orderBy: { createdAt: 'desc' } },
+      },
       orderBy: { createdAt: 'desc' },
     });
 
-    res.json({ success: true, data: contents.map(serializeContent) });
+    res.json({
+      success: true,
+      data: contents.map((content) => serializeContent(content, `client:${scopedClientId || 'admin'}`)),
+    });
   } catch (error) {
     if (error instanceof AppError) throw error;
     sendInternalError(req, res);
   }
 });
 
-router.get('/:id/publish-status', authenticateToken, requireAdmin, async (req, res) => {
+router.get('/:id/publish-status', authenticateToken, async (req, res) => {
   try {
+    const contentId = String(req.params.id);
+    if (req.auth?.tokenType === 'client') {
+      const visible = await prisma.content.findFirst({
+        where: { id: contentId, clientId: req.auth.clientId, status: { in: [...clientVisibleStatuses] } },
+        select: { id: true },
+      });
+      if (!visible) throw new AppError(404, 'not_found', 'Content not found');
+    } else if (req.auth?.tokenType !== 'admin') {
+      throw new AppError(403, 'forbidden', 'Insufficient permissions');
+    }
     const jobs = await prisma.publishJob.findMany({
-      where: { contentId: String(req.params.id) },
+      where: { contentId },
       select: safePublishJob,
       orderBy: { createdAt: 'desc' },
     });
@@ -244,13 +327,44 @@ router.get('/:id/publish-status', authenticateToken, requireAdmin, async (req, r
   }
 });
 
+router.post('/:id/publish-status/refresh', authenticateToken, async (req, res) => {
+  try {
+    const contentId = String(req.params.id);
+    const where = req.auth?.tokenType === 'client'
+      ? { id: contentId, clientId: req.auth.clientId, status: { in: [...clientVisibleStatuses] } }
+      : req.auth?.tokenType === 'admin'
+        ? { id: contentId }
+        : undefined;
+    if (!where) throw new AppError(403, 'forbidden', 'Insufficient permissions');
+    const content = await prisma.content.findFirst({ where: where as any, select: { id: true } });
+    if (!content) throw new AppError(404, 'not_found', 'Content not found');
+    const job = await prisma.publishJob.findFirst({
+      where: { contentId, platform: 'tiktok', status: { in: ['pending', 'uploading', 'publishing'] } },
+      select: safePublishJob,
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!job) throw new AppError(409, 'no_active_publish_job', 'No active TikTok delivery is available to refresh');
+    void publishToTikTok(job.id);
+    res.status(202).json({ success: true, data: job });
+  } catch (error) {
+    if (error instanceof AppError) throw error;
+    sendInternalError(req, res);
+  }
+});
+
 router.get('/:id', authenticateToken, async (req, res) => {
   const contentId = String(req.params.id);
-  const where = req.auth?.tokenType === 'client' ? { id: contentId, clientId: req.auth.clientId } : { id: contentId };
+  const where = req.auth?.tokenType === 'client'
+    ? { id: contentId, clientId: req.auth.clientId, status: { in: [...clientVisibleStatuses] } }
+    : { id: contentId };
   if (req.auth?.tokenType !== 'admin' && req.auth?.tokenType !== 'client') throw new AppError(403, 'forbidden', 'Insufficient permissions');
   const content = await prisma.content.findFirst({
-    where,
-    include: { assets: true, client: { select: safeClient }, publishJobs: { select: safePublishJob } },
+    where: where as any,
+    include: {
+      assets: true,
+      client: { select: safeClient },
+      publishJobs: { select: safePublishJob, orderBy: { createdAt: 'desc' } },
+    },
   });
 
   if (!content) {
@@ -258,14 +372,23 @@ router.get('/:id', authenticateToken, async (req, res) => {
     return;
   }
 
-  res.json({ success: true, data: serializeContent(content) });
+  res.json({
+    success: true,
+    data: serializeContent(content, req.auth.tokenType === 'client' ? `client:${req.auth.clientId}` : 'admin'),
+  });
 });
 
 router.post('/:id/deliver', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const id = String(req.params.id);
     await prisma.$transaction((tx) => transitionContent(tx, id, ['approved', 'failed'], 'delivered'));
-    const content = await prisma.content.findUnique({ where: { id }, include: { client: { select: safeClient } } });
+    const content = await prisma.content.findUnique({
+      where: { id },
+      include: {
+        client: { select: safeClient },
+        publishJobs: { select: safePublishJob, orderBy: { createdAt: 'desc' } },
+      },
+    });
     if (!content) throw new AppError(404, 'not_found', 'Content not found');
 
     await writeAudit({
@@ -276,26 +399,48 @@ router.post('/:id/deliver', authenticateToken, requireAdmin, async (req, res) =>
       details: 'Delivered to client',
     });
 
-    res.json({ success: true, data: serializeContent(content) });
+    res.json({ success: true, data: serializeContent(content, 'admin') });
   } catch (error) {
     if (error instanceof AppError) throw error;
     sendInternalError(req, res);
   }
 });
 
-router.post('/:id/confirm', authenticateToken, requireClient, async (req, res) => {
+async function sendToTikTok(req: Request, res: Response, legacyAlias = false): Promise<void> {
   try {
-    const { clientId, deviceId } = req.body;
+    const candidate = legacyAlias
+      ? { ...req.body, contentConfirmed: true, aiDisclosureAcknowledged: true }
+      : req.body;
+    const parsed = sendToTikTokSchema.safeParse(candidate);
+    if (!parsed.success) {
+      throw new AppError(
+        422,
+        'client_confirmation_required',
+        'Confirm the content review and AI disclosure instruction before sending to TikTok',
+      );
+    }
+    const { clientId, deviceId, accountBindingId, aiDisclosureAcknowledged } = parsed.data;
     const scopedClientId = clientIdFromAuth(req, clientId)!;
-
-    const existing = await prisma.content.findFirst({ where: { id: String(req.params.id), clientId: scopedClientId } });
+    const existing = await prisma.content.findFirst({
+      where: { id: String(req.params.id), clientId: scopedClientId, status: 'delivered' },
+    });
     if (!existing) {
-      res.status(404).json({ success: false, error: 'Content not found' });
-      return;
+      throw new AppError(404, 'not_found', 'Delivered content not found');
+    }
+    const client = await prisma.client.findUnique({ where: { id: scopedClientId }, select: { active: true } });
+    if (!client?.active) throw new AppError(403, 'client_inactive', 'Customer account is inactive');
+    const contract = buildTikTokDeliveryContract(existing);
+    if (contract.aiDisclosureRequired && !aiDisclosureAcknowledged) {
+      throw new AppError(
+        422,
+        'ai_disclosure_acknowledgement_required',
+        'Acknowledge that the AI-generated content label must be confirmed in the TikTok App',
+      );
     }
 
     const binding = await prisma.accountBinding.findFirst({
       where: {
+        ...(accountBindingId ? { id: accountBindingId } : {}),
         clientId: scopedClientId,
         platform: 'tiktok',
         active: true,
@@ -306,45 +451,162 @@ router.post('/:id/confirm', authenticateToken, requireClient, async (req, res) =
     });
 
     if (!binding) {
-      res.status(400).json({
-        success: false,
-        error: 'No TikTok account connected. Please bind a TikTok account in Dashboard first.',
-      });
-      return;
+      throw new AppError(
+        409,
+        'tiktok_connection_required',
+        'No active TikTok account is connected. Reconnect TikTok before sending.',
+      );
+    }
+    if (binding.scope && !binding.scope.split(/[,\s]+/u).includes('video.upload')) {
+      throw new AppError(
+        409,
+        'tiktok_scope_missing',
+        'TikTok connection does not grant video.upload. Reconnect TikTok before sending.',
+      );
     }
 
-    const { job, created } = await prisma.$transaction((tx) => createOrGetActivePublishJob(tx, {
-      contentId: existing.id, accountBindingId: binding.id, platform: 'tiktok', dispatchWhenImmediate: false,
-      changedBy: scopedClientId, createdNotes: 'Server publishing requested by client',
-      auditOnCreate: (jobId) => ({
-        action: 'publish_requested', actorType: 'client', targetType: 'content', targetId: existing.id,
-        actorId: scopedClientId, deviceId, details: JSON.stringify({ jobId, bindingId: binding.id }),
-      }),
-    }));
-    const content = await prisma.content.findUnique({ where: { id: existing.id }, include: { client: { select: safeClient } } });
+    const requestedAt = new Date();
+    const captionHash = crypto.createHash('sha256').update(contract.finalCaption).digest('hex');
+    const { job, created } = await prisma.$transaction(async (tx) => {
+      const confirmed = await tx.content.updateMany({
+        where: { id: existing.id, clientId: scopedClientId, status: 'delivered', clientConfirmedAt: null },
+        data: { clientConfirmedAt: requestedAt, clientConfirmedBy: scopedClientId },
+      });
+      if (confirmed.count === 1) {
+        await tx.auditLog.create({
+          data: {
+            action: 'client_content_confirmed',
+            actorId: scopedClientId,
+            actorType: 'client',
+            targetType: 'content',
+            targetId: existing.id,
+            deviceId: deviceId || null,
+            details: JSON.stringify({
+              captionHash,
+              hashtagCount: contract.hashtags.length,
+              aiDisclosureRequired: contract.aiDisclosureRequired,
+            }),
+          },
+        });
+      }
+
+      return createOrGetActivePublishJob(tx, {
+        contentId: existing.id,
+        accountBindingId: binding.id,
+        platform: 'tiktok',
+        dispatchWhenImmediate: false,
+        changedBy: scopedClientId,
+        createdNotes: 'Customer explicitly requested official TikTok Inbox draft delivery',
+        deliveryStage: 'send_requested',
+        sendRequestedAt: requestedAt,
+        finalCaption: contract.finalCaption,
+        aiDisclosureRequired: contract.aiDisclosureRequired,
+        aiDisclosureMethod: contract.aiDisclosureMethod,
+        auditOnCreate: (jobId) => ({
+          action: 'tiktok_send_requested',
+          actorType: 'client',
+          targetType: 'publish_job',
+          targetId: jobId,
+          actorId: scopedClientId,
+          deviceId,
+          details: JSON.stringify({
+            contentId: existing.id,
+            bindingId: binding.id,
+            captionHash,
+            hashtagCount: contract.hashtags.length,
+            aiDisclosureRequired: contract.aiDisclosureRequired,
+            aiDisclosureMethod: contract.aiDisclosureMethod,
+            textTransfer: contract.textTransfer,
+            customerFinalPublishRequired: true,
+          }),
+        }),
+      });
+    });
+    const content = await prisma.content.findUnique({
+      where: { id: existing.id },
+      include: {
+        client: { select: safeClient },
+        publishJobs: { select: safePublishJob, orderBy: { createdAt: 'desc' } },
+      },
+    });
     if (!content) throw new AppError(404, 'not_found', 'Content not found');
     if (created) {
-      publishToTikTok(job.id).catch((error) => console.error(`TikTok publish job ${job.id} failed`, error));
+      void publishToTikTok(job.id);
     }
 
-    res.json({
+    if (legacyAlias) {
+      res.setHeader('Deprecation', 'true');
+      res.setHeader('Link', `</v1/content/${existing.id}/send-to-tiktok>; rel="successor-version"`);
+    }
+    res.status(created && !legacyAlias ? 202 : 200).json({
       success: true,
       data: {
-        ...serializeContent(content),
+        ...serializeContent(content, `client:${scopedClientId}`),
         publishing: true,
         publishJobId: job.id,
         idempotent: !created,
-        message: 'Publishing to TikTok',
+        message: created
+          ? 'Sending the draft to TikTok. You must finish publishing in the TikTok App.'
+          : deliveryMessage(deriveDeliveryState(content, content.publishJobs[0])),
       },
     });
   } catch (error) {
     if (error instanceof AppError) throw error;
     sendInternalError(req, res);
   }
+}
+
+router.post('/:id/send-to-tiktok', authenticateToken, requireClient, (req, res) => {
+  return sendToTikTok(req, res);
+});
+
+router.post('/:id/confirm', authenticateToken, requireClient, (req, res) => {
+  return sendToTikTok(req, res, true);
+});
+
+router.post('/:id/retry-tiktok', authenticateToken, requireClient, async (req, res) => {
+  const scopedClientId = clientIdFromAuth(req, req.body?.clientId)!;
+  const contentId = String(req.params.id);
+  const failed = await prisma.publishJob.findFirst({
+    where: {
+      contentId,
+      content: { clientId: scopedClientId, status: 'failed' },
+      status: 'failed',
+      retryable: true,
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+  if (!failed) throw new AppError(409, 'retry_not_available', 'This TikTok delivery cannot be retried');
+  await prisma.$transaction(async (tx) => {
+    await transitionContent(tx, contentId, 'failed', 'delivered');
+    await tx.auditLog.create({
+      data: {
+        action: 'tiktok_retry_requested',
+        actorId: scopedClientId,
+        actorType: 'client',
+        targetType: 'publish_job',
+        targetId: failed.id,
+        details: JSON.stringify({ previousJobId: failed.id }),
+      },
+    });
+  });
+  await sendToTikTok(req, res);
 });
 
 router.post('/:id/approve', authenticateToken, requireAdmin, async (req, res) => {
   const id = String(req.params.id);
+  const review = await prisma.content.findUnique({
+    where: { id },
+    select: { aiGenerated: true, aiDisclosureConfirmed: true },
+  });
+  if (!review) throw new AppError(404, 'not_found', 'Content not found');
+  if (review.aiGenerated && !review.aiDisclosureConfirmed) {
+    throw new AppError(
+      409,
+      'ai_disclosure_review_required',
+      'Confirm the AI disclosure requirement before approving AI-generated content',
+    );
+  }
   await prisma.$transaction((tx) => transitionContent(tx, id, ['draft', 'pending_review', 'rejected'], 'approved'));
   const content = await prisma.content.findUnique({ where: { id }, include: { assets: true, client: { select: safeClient } } });
   if (!content) throw new AppError(404, 'not_found', 'Content not found');
@@ -357,7 +619,7 @@ router.post('/:id/approve', authenticateToken, requireAdmin, async (req, res) =>
     details: JSON.stringify({ previous_status: 'pending_review' }),
   });
 
-  res.json({ success: true, data: serializeContent(content) });
+  res.json({ success: true, data: serializeContent(content, 'admin') });
 });
 
 router.post('/:id/reject', authenticateToken, requireAdmin, async (req, res) => {
@@ -375,20 +637,34 @@ router.post('/:id/reject', authenticateToken, requireAdmin, async (req, res) => 
     details: JSON.stringify({ reason, detail }),
   });
 
-  res.json({ success: true, data: serializeContent(content) });
+  res.json({ success: true, data: serializeContent(content, 'admin') });
 });
 
 router.delete('/:id', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    await prisma.content.delete({ where: { id: String(req.params.id) } });
+    const contentId = String(req.params.id);
+    const content = await prisma.content.findUnique({
+      where: { id: contentId },
+      select: { status: true, _count: { select: { publishJobs: true } } },
+    });
+    if (!content) throw new AppError(404, 'not_found', 'Content not found');
+    if (!['draft', 'rejected'].includes(content.status) || content._count.publishJobs > 0) {
+      throw new AppError(
+        409,
+        'content_delete_not_allowed',
+        'Only draft or rejected content without publish history can be deleted',
+      );
+    }
+    await prisma.content.delete({ where: { id: contentId } });
     await writeAudit({
       action: 'delete_content',
       actorType: 'dashboard',
       targetType: 'content',
-      targetId: String(req.params.id),
+      targetId: contentId,
     });
     res.json({ success: true });
   } catch (error) {
+    if (error instanceof AppError) throw error;
     sendInternalError(req, res);
   }
 });
