@@ -2,7 +2,7 @@
  * Smoke test: health → login → content CRUD → deliver → client login → queue
  * Run with: npx tsx smoke-test.ts
  */
-const BASE = process.env.API_BASE ?? 'http://104.238.181.32:3000';
+const BASE = process.env.API_BASE ?? 'http://localhost:3000';
 
 async function req(method: string, path: string, token?: string, body?: unknown) {
   const res = await fetch(`${BASE}${path}`, {

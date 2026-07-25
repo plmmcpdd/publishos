@@ -124,8 +124,8 @@ describe('Phase 1A authentication and tenant isolation', () => {
     expect((await request(app).get(`/v1/content?clientId=${clientBId}`).set('Authorization', `Bearer ${clientAToken}`)).status).toBe(403);
     const other = await prisma.content.findFirst({ where: { clientId: clientBId } });
     expect((await request(app).get(`/v1/content/${other!.id}`).set('Authorization', `Bearer ${clientAToken}`)).status).toBe(404);
-    expect((await request(app).post(`/v1/content/${other!.id}/confirm`).set('Authorization', `Bearer ${clientAToken}`).send({ clientId: clientAId })).status).toBe(404);
-    expect((await request(app).post(`/v1/content/${contentAId}/confirm`).set('Authorization', `Bearer ${clientAToken}`).send({ clientId: clientBId })).status).toBe(403);
+    expect((await request(app).post(`/v1/content/${other!.id}/send-to-tiktok`).set('Authorization', `Bearer ${clientAToken}`).send({ clientId: clientAId, contentConfirmed: true })).status).toBe(404);
+    expect((await request(app).post(`/v1/content/${contentAId}/send-to-tiktok`).set('Authorization', `Bearer ${clientAToken}`).send({ clientId: clientBId, contentConfirmed: true })).status).toBe(403);
   });
 
   it('limits bindings and device queue to their tenant', async () => {
@@ -163,7 +163,7 @@ describe('Phase 1A authentication and tenant isolation', () => {
     expect((await request(app).post(`/v1/content/${contentId}/approve`).set('Authorization', `Bearer ${adminToken}`)).status).toBe(200);
     expect((await request(app).post(`/v1/content/${contentId}/deliver`).set('Authorization', `Bearer ${adminToken}`)).status).toBe(200);
     expect((await request(app).get(`/v1/content/${contentId}`).set('Authorization', `Bearer ${clientAToken}`)).status).toBe(200);
-    expect((await request(app).post(`/v1/content/${contentId}/confirm`).set('Authorization', `Bearer ${clientAToken}`).send({ clientId: clientAId })).status).toBe(200);
+    expect((await request(app).post(`/v1/content/${contentId}/send-to-tiktok`).set('Authorization', `Bearer ${clientAToken}`).send({ clientId: clientAId, contentConfirmed: true })).status).toBe(202);
     expect((await request(app).post('/v1/upload/video').set('Authorization', `Bearer ${adminToken}`)).status).toBe(400);
   });
 });
@@ -333,12 +333,12 @@ describe('Phase 1B state machines and task replay protection', () => {
     expect((await request(app).post(`/v1/content/${contentId}/deliver`).set('Authorization', `Bearer ${adminToken}`)).status).toBe(409);
   });
 
-  it('makes client confirmation idempotent and retains one active job', async () => {
+  it('makes client send-to-tiktok idempotent and retains one active job', async () => {
     publisherMock.publishToTikTok.mockClear();
-    const first = await request(app).post(`/v1/content/${contentAId}/confirm`).set('Authorization', `Bearer ${clientAToken}`).send({ clientId: clientAId });
-    expect(first.status).toBe(200);
+    const first = await request(app).post(`/v1/content/${contentAId}/send-to-tiktok`).set('Authorization', `Bearer ${clientAToken}`).send({ clientId: clientAId, contentConfirmed: true });
+    expect(first.status).toBe(202);
     expect(first.body.data.idempotent).toBe(false);
-    const second = await request(app).post(`/v1/content/${contentAId}/confirm`).set('Authorization', `Bearer ${clientAToken}`).send({ clientId: clientAId });
+    const second = await request(app).post(`/v1/content/${contentAId}/send-to-tiktok`).set('Authorization', `Bearer ${clientAToken}`).send({ clientId: clientAId, contentConfirmed: true });
     expect(second.status).toBe(200);
     expect(second.body.data).toMatchObject({ publishJobId: first.body.data.publishJobId, idempotent: true });
     expect(await prisma.publishJob.count({ where: { contentId: contentAId, activeKey: `${contentAId}:tiktok` } })).toBe(1);
@@ -346,14 +346,14 @@ describe('Phase 1B state machines and task replay protection', () => {
     expect(publisherMock.publishToTikTok).toHaveBeenCalledTimes(1);
   });
 
-  it('deduplicates concurrent confirmations at the database constraint', async () => {
+  it('deduplicates concurrent send-to-tiktok at the database constraint', async () => {
     publisherMock.publishToTikTok.mockClear();
     const content = await prisma.content.create({ data: { clientId: clientAId, title: 'Concurrent confirmation', description: 'test', videoUrl: 'mock/concurrent.mp4', platforms: '[\"tiktok\"]', status: 'delivered' } });
     const responses = await Promise.all([
-      request(app).post(`/v1/content/${content.id}/confirm`).set('Authorization', `Bearer ${clientAToken}`).send({ clientId: clientAId }),
-      request(app).post(`/v1/content/${content.id}/confirm`).set('Authorization', `Bearer ${clientAToken}`).send({ clientId: clientAId }),
+      request(app).post(`/v1/content/${content.id}/send-to-tiktok`).set('Authorization', `Bearer ${clientAToken}`).send({ clientId: clientAId, contentConfirmed: true }),
+      request(app).post(`/v1/content/${content.id}/send-to-tiktok`).set('Authorization', `Bearer ${clientAToken}`).send({ clientId: clientAId, contentConfirmed: true }),
     ]);
-    expect(responses.map((response) => response.status)).toEqual([200, 200]);
+    expect(responses.map((response) => response.status)).toEqual(expect.arrayContaining([200, 202]));
     expect(await prisma.publishJob.count({ where: { contentId: content.id, activeKey: `${content.id}:tiktok` } })).toBe(1);
     expect(publisherMock.publishToTikTok).toHaveBeenCalledTimes(1);
   });

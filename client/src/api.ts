@@ -1,18 +1,14 @@
 // ---- Server URL management ----
-// ⚠️ CHANGE THIS when deploying to a new server:
-const DEFAULT_SERVER = 'http://104.238.181.32:3000/v1';
-// Priority: localStorage (Settings page) > build-time VITE_API_URL > DEFAULT_SERVER > auto-detect > fallback
+// Priority: localStorage (Settings page) > build-time VITE_API_URL > localhost dev default
 const STORAGE_KEY = 'publishos_backend_url';
 const BUILD_URL = import.meta.env.VITE_API_URL || '';
+const DEV_DEFAULT = 'http://localhost:3000/v1';
 
 function getApiBase(): string {
-  // 1. User-configured URL (from Settings page)
   const saved = localStorage.getItem(STORAGE_KEY);
   if (saved) return saved;
-  // 2. Build-time URL (VITE_API_URL)
   if (BUILD_URL) return BUILD_URL;
-  // 3. Hardcoded default server
-  return DEFAULT_SERVER;
+  return DEV_DEFAULT;
 }
 
 export const api = {
@@ -21,10 +17,34 @@ export const api = {
   resetBase() { localStorage.removeItem(STORAGE_KEY); },
 };
 
+// ---- Delivery state types ----
+
+export type DeliveryState =
+  | 'ready_to_review'
+  | 'ready_to_send'
+  | 'send_requested'
+  | 'tiktok_initializing'
+  | 'uploading_video'
+  | 'tiktok_processing'
+  | 'sent_to_tiktok'
+  | 'waiting_for_final_tiktok_publish'
+  | 'published'
+  | 'failed'
+  | 'cancelled';
+
+export interface AiDisclosure {
+  required: boolean;
+  internalReviewConfirmed: boolean;
+  method: string;
+  apiAutomaticallyApplied: boolean;
+  instruction: string;
+}
+
 export interface ContentItem {
   id: string;
   title: string;
   description?: string;
+  caption?: string;
   platform: string;
   platforms?: string;
   scheduledAt: string;
@@ -37,6 +57,29 @@ export interface ContentItem {
   postUrl?: string;
   publishError?: string | null;
   publishJobStatus?: string | null;
+  // Phase 1D delivery fields
+  finalCaption?: string;
+  hashtags?: string[];
+  aiDisclosure?: AiDisclosure;
+  deliveryState?: DeliveryState;
+  deliveryMessage?: string;
+  canRetry?: boolean;
+  latestPublishJob?: PublishJobSummary | null;
+}
+
+export interface PublishJobSummary {
+  id: string;
+  status: string;
+  deliveryStage?: string;
+  publishId?: string;
+  failedAt?: string;
+  errorCode?: string;
+  errorMessage?: string;
+  retryable?: boolean;
+  retryCount?: number;
+  inboxDeliveredAt?: string;
+  lastPlatformStatus?: string;
+  lastStatusCheckedAt?: string;
 }
 
 export interface ClientSession {
@@ -48,10 +91,11 @@ export interface ClientSession {
   };
 }
 
-export interface ConfirmContentResult {
+export interface SendToTikTokResult {
   content: ContentItem;
   publishing: boolean;
   publishJobId?: string | null;
+  idempotent?: boolean;
   message?: string;
 }
 
@@ -59,6 +103,7 @@ interface ApiContent {
   id: string;
   title: string;
   description?: string;
+  caption?: string;
   platforms?: string;
   platform?: string;
   scheduleAt?: string | null;
@@ -71,6 +116,14 @@ interface ApiContent {
   platformPostUrl?: string | null;
   publishError?: string | null;
   publishJobStatus?: string | null;
+  // Phase 1D fields
+  finalCaption?: string;
+  hashtags?: string[];
+  aiDisclosure?: AiDisclosure;
+  deliveryState?: DeliveryState;
+  deliveryMessage?: string;
+  canRetry?: boolean;
+  latestPublishJob?: PublishJobSummary | null;
 }
 
 function firstPlatform(value?: string) {
@@ -88,6 +141,7 @@ function mapContent(item: ApiContent): ContentItem {
     id: item.id,
     title: item.title,
     description: item.description,
+    caption: item.caption,
     platform: item.platform || firstPlatform(item.platforms),
     platforms: item.platforms,
     scheduledAt: item.scheduleAt || item.updatedAt || item.createdAt || '',
@@ -100,6 +154,13 @@ function mapContent(item: ApiContent): ContentItem {
     postUrl: item.platformPostUrl || undefined,
     publishError: item.publishError || null,
     publishJobStatus: item.publishJobStatus || null,
+    finalCaption: item.finalCaption,
+    hashtags: item.hashtags,
+    aiDisclosure: item.aiDisclosure,
+    deliveryState: item.deliveryState,
+    deliveryMessage: item.deliveryMessage,
+    canRetry: item.canRetry,
+    latestPublishJob: item.latestPublishJob,
   };
 }
 
@@ -184,18 +245,60 @@ export async function fetchDeliveredContents(): Promise<ContentItem[]> {
   return data.data.map(mapContent);
 }
 
-export async function confirmContent(id: string): Promise<ConfirmContentResult> {
+export async function fetchContentDetail(id: string): Promise<ContentItem> {
+  const clientId = requireClientId();
+  const data = await request<{ success: boolean; data: ApiContent }>(
+    `/content/${id}?clientId=${encodeURIComponent(clientId)}`,
+  );
+  return mapContent(data.data);
+}
+
+export async function sendToTikTok(
+  id: string,
+  opts: { contentConfirmed: boolean; aiDisclosureAcknowledged?: boolean },
+): Promise<SendToTikTokResult> {
   const data = await request<{
     success: boolean;
-    data: ApiContent & { publishing?: boolean; publishJobId?: string | null; message?: string };
-  }>(`/content/${id}/confirm`, {
+    data: ApiContent & { publishing?: boolean; publishJobId?: string | null; idempotent?: boolean; message?: string };
+  }>(`/content/${id}/send-to-tiktok`, {
     method: 'POST',
-    body: JSON.stringify({ clientId: requireClientId(), deviceId: requireDeviceId() }),
+    body: JSON.stringify({
+      clientId: requireClientId(),
+      deviceId: requireDeviceId(),
+      contentConfirmed: opts.contentConfirmed,
+      aiDisclosureAcknowledged: opts.aiDisclosureAcknowledged,
+    }),
   });
   return {
     content: mapContent(data.data),
     publishing: Boolean(data.data.publishing),
     publishJobId: data.data.publishJobId,
+    idempotent: data.data.idempotent,
+    message: data.data.message,
+  };
+}
+
+export async function refreshPublishStatus(id: string): Promise<void> {
+  await request(`/content/${id}/publish-status/refresh`, { method: 'POST' });
+}
+
+export async function retryTikTok(id: string): Promise<SendToTikTokResult> {
+  const data = await request<{
+    success: boolean;
+    data: ApiContent & { publishing?: boolean; publishJobId?: string | null; idempotent?: boolean; message?: string };
+  }>(`/content/${id}/retry-tiktok`, {
+    method: 'POST',
+    body: JSON.stringify({
+      clientId: requireClientId(),
+      contentConfirmed: true,
+      aiDisclosureAcknowledged: true,
+    }),
+  });
+  return {
+    content: mapContent(data.data),
+    publishing: Boolean(data.data.publishing),
+    publishJobId: data.data.publishJobId,
+    idempotent: data.data.idempotent,
     message: data.data.message,
   };
 }
@@ -205,7 +308,7 @@ export async function fetchClientHistory(): Promise<ContentItem[]> {
   const data = await request<{ success: boolean; data: ApiContent[] }>(
     `/content?clientId=${encodeURIComponent(clientId)}`,
   );
-  return data.data.map(mapContent).filter((item) => item.status === 'published' || item.status === 'rejected' || item.status === 'failed');
+  return data.data.map(mapContent);
 }
 
 // ---- TikTok binding ----

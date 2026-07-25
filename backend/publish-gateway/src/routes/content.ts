@@ -406,12 +406,9 @@ router.post('/:id/deliver', authenticateToken, requireAdmin, async (req, res) =>
   }
 });
 
-async function sendToTikTok(req: Request, res: Response, legacyAlias = false): Promise<void> {
+async function sendToTikTok(req: Request, res: Response): Promise<void> {
   try {
-    const candidate = legacyAlias
-      ? { ...req.body, contentConfirmed: true, aiDisclosureAcknowledged: true }
-      : req.body;
-    const parsed = sendToTikTokSchema.safeParse(candidate);
+    const parsed = sendToTikTokSchema.safeParse(req.body);
     if (!parsed.success) {
       throw new AppError(
         422,
@@ -534,11 +531,7 @@ async function sendToTikTok(req: Request, res: Response, legacyAlias = false): P
       void publishToTikTok(job.id);
     }
 
-    if (legacyAlias) {
-      res.setHeader('Deprecation', 'true');
-      res.setHeader('Link', `</v1/content/${existing.id}/send-to-tiktok>; rel="successor-version"`);
-    }
-    res.status(created && !legacyAlias ? 202 : 200).json({
+    res.status(created ? 202 : 200).json({
       success: true,
       data: {
         ...serializeContent(content, `client:${scopedClientId}`),
@@ -561,7 +554,13 @@ router.post('/:id/send-to-tiktok', authenticateToken, requireClient, (req, res) 
 });
 
 router.post('/:id/confirm', authenticateToken, requireClient, (req, res) => {
-  return sendToTikTok(req, res, true);
+  res.setHeader('Deprecation', 'true');
+  res.setHeader('Link', `</v1/content/${req.params.id}/send-to-tiktok>; rel="successor-version"`);
+  throw new AppError(
+    410,
+    'send_to_tiktok_required',
+    'The /confirm endpoint is deprecated. Use /send-to-tiktok with explicit contentConfirmed and aiDisclosureAcknowledged.',
+  );
 });
 
 router.post('/:id/retry-tiktok', authenticateToken, requireClient, async (req, res) => {

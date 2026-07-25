@@ -31,13 +31,13 @@ jobs:
         run: cd client && npm run build:win
         shell: bash
         env:
-          VITE_API_URL: "http://104.238.181.32:3000/v1"
+          VITE_API_URL: ${{ vars.VITE_API_URL || '' }}
       - name: Build Mac
         if: matrix.os == 'macos-latest'
         run: cd client && npm run build:mac
         shell: bash
         env:
-          VITE_API_URL: "http://104.238.181.32:3000/v1"
+          VITE_API_URL: ${{ vars.VITE_API_URL || '' }}
       - name: List release files
         run: ls -la client/release/
         shell: bash
