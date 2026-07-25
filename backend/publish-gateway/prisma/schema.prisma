@@ -47,23 +47,33 @@ model OAuthAuthorizationState {
 }
 
 model AccountBinding {
-  id               String       @id @default(cuid())
-  clientId         String
-  client           Client       @relation(fields: [clientId], references: [id])
-  platform         String // tiktok, instagram, facebook, x, youtube
-  accountUsername  String
-  platformUserId   String?
-  username         String?
-  accessToken      String?
-  refreshToken     String?
-  expiresAt        DateTime?
-  scope            String?
-  status           String       @default("active")
-  businessLocation String? // JSON string: { country, state, city }
-  active           Boolean      @default(true)
-  createdAt        DateTime     @default(now())
-  updatedAt        DateTime     @updatedAt
-  publishJobs      PublishJob[]
+  id                      String          @id @default(cuid())
+  clientId                String
+  client                  Client          @relation(fields: [clientId], references: [id])
+  platform                String // tiktok, instagram, facebook, x, youtube
+  accountUsername         String
+  platformUserId          String?
+  username                String?
+  accessToken             String?
+  refreshToken            String?
+  expiresAt               DateTime?
+  scope                   String?
+  grantedScopes           String? // JSON array: scopes actually returned by platform
+  status                  String          @default("active")
+  reauthorizationRequired Boolean         @default(false)
+  reauthorizationReason   String?
+  lastCollectionAttemptAt DateTime?
+  lastCollectionSuccessAt DateTime?
+  nextCollectionAt        DateTime?
+  collectionStatus        String          @default("idle") // idle, collecting, success, error
+  collectionErrorCode     String?
+  collectionErrorMessage  String?
+  businessLocation        String? // JSON string: { country, state, city }
+  active                  Boolean         @default(true)
+  createdAt               DateTime        @default(now())
+  updatedAt               DateTime        @updatedAt
+  publishJobs             PublishJob[]
+  publishedPosts          PublishedPost[]
 
   @@unique([clientId, platform, accountUsername])
 }
@@ -185,41 +195,71 @@ model PublishJob {
   createdAt                 DateTime             @default(now())
   updatedAt                 DateTime             @updatedAt
   history                   JobHistory[]
+  publishedPosts            PublishedPost[]
   performanceMetrics        PerformanceMetrics[]
 
   @@index([status, nextStatusCheckAt])
   @@index([deliveryStage, workerLeaseUntil])
 }
 
-model PerformanceMetrics {
-  id             String     @id @default(cuid())
-  clientId       String
-  client         Client     @relation(fields: [clientId], references: [id])
-  contentId      String
-  content        Content    @relation(fields: [contentId], references: [id])
-  publishJobId   String
-  publishJob     PublishJob @relation(fields: [publishJobId], references: [id], onDelete: Cascade)
-  platform       String
-  platformPostId String
-  views          Int        @default(0)
-  likes          Int        @default(0)
-  comments       Int        @default(0)
-  shares         Int        @default(0)
-  saves          Int        @default(0)
-  reach          Int        @default(0)
-  impressions    Int        @default(0)
-  engagementRate Float      @default(0)
-  completionRate Float?
-  collectedAt    DateTime   @default(now())
-  metricDate     String
-  period         String     @default("daily")
-  createdAt      DateTime   @default(now())
+model PublishedPost {
+  id                 String               @id @default(cuid())
+  publishJobId       String
+  publishJob         PublishJob           @relation(fields: [publishJobId], references: [id], onDelete: Cascade)
+  accountBindingId   String
+  accountBinding     AccountBinding       @relation(fields: [accountBindingId], references: [id])
+  platform           String
+  platformPostId     String
+  platformPostUrl    String?
+  publishedAt        DateTime?
+  discoveredAt       DateTime             @default(now())
+  lastSeenAt         DateTime             @default(now())
+  status             String               @default("active") // active, deleted, unavailable
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+  performanceMetrics PerformanceMetrics[]
 
-  @@unique([publishJobId, period, metricDate])
+  @@unique([platform, platformPostId])
+  @@index([publishJobId])
+  @@index([accountBindingId])
+}
+
+model PerformanceMetrics {
+  id               String         @id @default(cuid())
+  clientId         String
+  client           Client         @relation(fields: [clientId], references: [id])
+  contentId        String
+  content          Content        @relation(fields: [contentId], references: [id])
+  publishJobId     String
+  publishJob       PublishJob     @relation(fields: [publishJobId], references: [id], onDelete: Cascade)
+  publishedPostId  String?
+  publishedPost    PublishedPost? @relation(fields: [publishedPostId], references: [id], onDelete: SetNull)
+  platform         String
+  platformPostId   String
+  views            Int?
+  likes            Int?
+  comments         Int?
+  shares           Int?
+  saves            Int?
+  reach            Int?
+  impressions      Int?
+  engagementRate   Float?
+  completionRate   Float?
+  averageWatchTime Float?
+  observedAt       DateTime       @default(now())
+  collectedAt      DateTime       @default(now())
+  metricDate       String
+  period           String         @default("daily")
+  source           String         @default("tiktok_api")
+  rawResponseHash  String?
+  createdAt        DateTime       @default(now())
+
+  @@unique([publishedPostId, period, metricDate])
   @@index([clientId, collectedAt])
   @@index([clientId, platform])
   @@index([contentId])
   @@index([publishJobId])
+  @@index([publishedPostId])
 }
 
 model JobHistory {

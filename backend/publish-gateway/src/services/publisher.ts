@@ -14,10 +14,17 @@ import {
   normalizeLocalStorageKey,
 } from './media-storage';
 import { safeDownloadExternalMedia } from './safe-http-fetch';
+import {
+  getValidAccessToken,
+  hasScope,
+  markBindingExpired,
+  TikTokTokenError,
+  type TikTokTokenBinding,
+} from './tiktok-token';
+
 
 const TIKTOK_INIT_ENDPOINT = 'https://open.tiktokapis.com/v2/post/publish/inbox/video/init/';
 const TIKTOK_STATUS_ENDPOINT = 'https://open.tiktokapis.com/v2/post/publish/status/fetch/';
-const TIKTOK_TOKEN_ENDPOINT = 'https://open.tiktokapis.com/v2/oauth/token/';
 const MIN_CHUNK_BYTES = 5 * 1024 * 1024;
 const MAX_CHUNK_BYTES = 64 * 1024 * 1024;
 const UPLOAD_URL_TTL_MS = 60 * 60 * 1000;
@@ -25,18 +32,6 @@ const DEFAULT_LEASE_MS = 2 * 60 * 1000;
 const PROCESSING_RECHECK_MS = 30 * 1000;
 const INBOX_RECHECK_MS = 5 * 60 * 1000;
 const MAX_STATUS_BACKOFF_MS = 15 * 60 * 1000;
-
-type BindingForPublish = {
-  id: string;
-  clientId: string;
-  platform: string;
-  accessToken: string | null;
-  refreshToken: string | null;
-  expiresAt: Date | null;
-  scope: string | null;
-  status: string;
-  active: boolean;
-};
 
 type TikTokResponse = {
   data?: Record<string, unknown>;
@@ -83,15 +78,28 @@ function safeFailureReason(value: unknown): string | undefined {
   return /^[a-zA-Z0-9_.-]{1,120}$/.test(value) ? value : undefined;
 }
 
-function safePublisherMessage(code: string, operation: 'refresh' | 'init' | 'upload' | 'status'): string {
-  if (code === 'access_token_invalid' || code === 'scope_not_authorized' || code === 'invalid_grant') {
-    return 'TikTok connection expired. Reconnect TikTok and retry.';
+async function getPublisherAccessToken(binding: TikTokTokenBinding): Promise<string> {
+  if (!hasScope(binding, 'video.upload')) {
+    throw new PublisherError(
+      'tiktok_scope_missing',
+      'TikTok connection does not grant video.upload. Reconnect TikTok and retry.',
+      true,
+    );
   }
-  if (code === 'rate_limit_exceeded') return 'TikTok rate limit reached. Please wait before trying again.';
+  try {
+    return await getValidAccessToken(binding);
+  } catch (error) {
+    if (error instanceof TikTokTokenError) {
+      throw new PublisherError(error.code, error.message, error.retryable, error.temporary);
+    }
+    throw error;
+  }
+}
+
+function safePublisherMessage(code: string, operation: 'init' | 'upload' | 'status'): string {
   if (code === 'spam_risk_too_many_pending_share') {
     return 'TikTok has reached the pending draft limit for this account. Finish or remove pending drafts before retrying.';
   }
-  if (operation === 'refresh') return 'TikTok token refresh failed.';
   if (operation === 'init') return 'TikTok could not initialize the draft upload.';
   if (operation === 'upload') return 'TikTok could not receive the video upload.';
   return 'TikTok status is temporarily unavailable.';
@@ -106,128 +114,6 @@ async function responseJson(response: Response): Promise<TikTokResponse> {
   } catch {
     return {};
   }
-}
-
-function tokenFields(data: TikTokResponse): {
-  accessToken?: string;
-  refreshToken?: string;
-  expiresIn?: number;
-  scope?: string;
-} {
-  const nested = data.data && typeof data.data === 'object' ? data.data : {};
-  const accessToken = nested.access_token ?? (data as Record<string, unknown>).access_token;
-  const refreshToken = nested.refresh_token ?? (data as Record<string, unknown>).refresh_token;
-  const expiresInValue = nested.expires_in ?? (data as Record<string, unknown>).expires_in;
-  const scope = nested.scope ?? (data as Record<string, unknown>).scope;
-  const expiresIn = Number(expiresInValue);
-  return {
-    accessToken: typeof accessToken === 'string' ? accessToken : undefined,
-    refreshToken: typeof refreshToken === 'string' ? refreshToken : undefined,
-    expiresIn: Number.isFinite(expiresIn) && expiresIn > 0 ? expiresIn : undefined,
-    scope: typeof scope === 'string' ? scope : undefined,
-  };
-}
-
-async function markBindingExpired(bindingId: string): Promise<void> {
-  await prisma.accountBinding.updateMany({
-    where: { id: bindingId },
-    data: { active: false, status: 'expired' },
-  });
-}
-
-async function refreshTikTokToken(binding: BindingForPublish): Promise<string> {
-  if (!binding.refreshToken) {
-    await markBindingExpired(binding.id);
-    throw new PublisherError(
-      'tiktok_connection_expired',
-      'TikTok connection expired. Reconnect TikTok and retry.',
-      true,
-    );
-  }
-
-  const credentials = publisherCredentials();
-  let response: Response;
-  try {
-    response = await fetch(TIKTOK_TOKEN_ENDPOINT, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        client_key: credentials.key,
-        client_secret: credentials.secret,
-        grant_type: 'refresh_token',
-        refresh_token: binding.refreshToken,
-      }),
-      signal: timeoutSignal(),
-    });
-  } catch {
-    throw new PublisherError('tiktok_refresh_unavailable', safePublisherMessage('network', 'refresh'), true, true);
-  }
-
-  const data = await responseJson(response);
-  const upstreamCode = safeUpstreamCode(data, response.ok ? 'invalid_response' : `http_${response.status}`);
-  if (!response.ok || (data.error?.code && data.error.code !== 'ok')) {
-    if (['access_token_invalid', 'invalid_grant', 'scope_not_authorized'].includes(upstreamCode)) {
-      await markBindingExpired(binding.id);
-      throw new PublisherError(
-        'tiktok_connection_expired',
-        safePublisherMessage(upstreamCode, 'refresh'),
-        true,
-      );
-    }
-    throw new PublisherError(
-      upstreamCode === 'rate_limit_exceeded' ? 'tiktok_rate_limited' : 'tiktok_refresh_failed',
-      safePublisherMessage(upstreamCode, 'refresh'),
-      true,
-      response.status === 429 || response.status >= 500,
-    );
-  }
-
-  const tokens = tokenFields(data);
-  if (!tokens.accessToken) {
-    throw new PublisherError('tiktok_refresh_failed', 'TikTok token refresh returned an invalid response.', true);
-  }
-
-  await prisma.accountBinding.update({
-    where: { id: binding.id },
-    data: {
-      accessToken: tokens.accessToken,
-      refreshToken: tokens.refreshToken || binding.refreshToken,
-      expiresAt: tokens.expiresIn ? new Date(Date.now() + tokens.expiresIn * 1000) : binding.expiresAt,
-      scope: tokens.scope || binding.scope,
-      status: 'active',
-      active: true,
-    },
-  });
-  return tokens.accessToken;
-}
-
-async function getValidAccessToken(binding: BindingForPublish): Promise<string> {
-  if (!binding.active || binding.status !== 'active') {
-    throw new PublisherError(
-      'tiktok_connection_expired',
-      'TikTok connection is inactive. Reconnect TikTok and retry.',
-      true,
-    );
-  }
-  if (binding.platform !== 'tiktok') {
-    throw new PublisherError('tiktok_binding_invalid', 'The selected account is not a TikTok binding.');
-  }
-  if (binding.scope && !binding.scope.split(/[,\s]+/u).includes('video.upload')) {
-    throw new PublisherError(
-      'tiktok_scope_missing',
-      'TikTok connection does not grant video.upload. Reconnect TikTok and retry.',
-      true,
-    );
-  }
-  if (!binding.accessToken) {
-    throw new PublisherError(
-      'tiktok_connection_expired',
-      'TikTok connection is missing an access token. Reconnect TikTok and retry.',
-      true,
-    );
-  }
-  if (!binding.expiresAt || binding.expiresAt > new Date(Date.now() + 60_000)) return binding.accessToken;
-  return refreshTikTokToken(binding);
 }
 
 function publicMediaUrl(reference: string): string {
@@ -418,7 +304,7 @@ async function initializeUpload(jobId: string, video: Buffer): Promise<void> {
     where: { id: jobId },
     include: { accountBinding: true },
   });
-  const accessToken = await getValidAccessToken(job.accountBinding);
+  const accessToken = await getPublisherAccessToken(job.accountBinding);
   let response: Response;
   try {
     response = await fetch(TIKTOK_INIT_ENDPOINT, {
@@ -766,7 +652,7 @@ async function fetchPublishStatus(jobId: string): Promise<void> {
   if (!job.publishId) {
     throw new PublisherError('publish_id_missing', 'TikTok publish identifier is missing.');
   }
-  const accessToken = await getValidAccessToken(job.accountBinding);
+  const accessToken = await getPublisherAccessToken(job.accountBinding);
   let response: Response;
   try {
     response = await fetch(TIKTOK_STATUS_ENDPOINT, {

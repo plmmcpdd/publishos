@@ -6,7 +6,7 @@ const navItems = [
   { path: '/contents', label: '内容管理', icon: '03' },
   { path: '/customers', label: '客户管理', icon: '04' },
   { path: '/social-accounts', label: '社交账号', icon: '05' },
-  { path: '/analytics', label: '效果分析', icon: '06' },
+  { path: '/analytics', label: '数据回传', icon: '06' },
   { path: '/tickets', label: 'GEO 诊断', icon: '07' },
   { path: '/monitor', label: '监控', icon: '08' },
   { path: '/audit', label: '审计日志', icon: '09' },

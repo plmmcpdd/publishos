@@ -45,6 +45,13 @@ export interface SocialBinding {
   status: string;
   expiresAt?: string | null;
   createdAt: string;
+  reauthorizationRequired?: boolean;
+  reauthorizationReason?: string | null;
+  collectionStatus?: string;
+  lastCollectionAttemptAt?: string | null;
+  lastCollectionSuccessAt?: string | null;
+  collectionErrorCode?: string | null;
+  collectionErrorMessage?: string | null;
 }
 
 export interface AdminSession {
@@ -82,16 +89,12 @@ export interface MetricsOverview {
 }
 
 export interface TopMetric {
-  id: string;
   contentId: string;
   platform: string;
-  platformPostId: string;
-  views: number;
-  likes: number;
-  comments: number;
-  shares: number;
-  engagementRate: number;
-  collectedAt: string;
+  totalViews: number;
+  totalLikes: number;
+  totalComments: number;
+  totalShares: number;
   content?: {
     id: string;
     title: string;

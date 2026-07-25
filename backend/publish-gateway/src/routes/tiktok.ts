@@ -20,9 +20,11 @@ function callbackSecurityHeaders(res: Response): string {
 }
 function timeoutSignal(ms = 10_000): AbortSignal { return AbortSignal.timeout(ms); }
 
+const REQUIRED_SCOPES = ['user.info.basic', 'video.upload', 'video.list'];
+
 function authUrl(state: string, redirectUri: string): string {
   const { key } = credentials(); const url = new URL('https://www.tiktok.com/v2/auth/authorize/');
-  url.searchParams.set('client_key', key); url.searchParams.set('response_type', 'code'); url.searchParams.set('scope', 'user.info.basic,video.upload'); url.searchParams.set('redirect_uri', redirectUri); url.searchParams.set('state', state); return url.toString();
+  url.searchParams.set('client_key', key); url.searchParams.set('response_type', 'code'); url.searchParams.set('scope', REQUIRED_SCOPES.join(',')); url.searchParams.set('redirect_uri', redirectUri); url.searchParams.set('state', state); return url.toString();
 }
 async function exchange(code: string, redirectUri: string) {
   const { key, secret } = credentials();
@@ -41,13 +43,34 @@ async function profile(accessToken: string, openId: string): Promise<string> {
   catch { return `TikTok User ${openId.slice(-8)}`; }
 }
 async function saveBinding(input: { clientId: string; username: string; openId: string; token: string; refreshToken?: string; expiresIn: number; scope?: string }) {
-  if (input.scope && !input.scope.split(/[,\s]+/u).includes('video.upload')) {
+  const grantedScopes = input.scope ? input.scope.split(/[,\s]+/u).filter(Boolean) : [];
+  const hasVideoUpload = grantedScopes.includes('video.upload');
+  const hasVideoList = grantedScopes.includes('video.list');
+
+  if (!hasVideoUpload) {
     throw new AppError(409, 'oauth_scope_missing', 'TikTok authorization did not grant video.upload');
   }
+
+  const reauthorizationRequired = !hasVideoList;
+  const reauthorizationReason = !hasVideoList ? 'video.list scope not granted. Reauthorize to enable metrics collection.' : null;
+
   await prisma.$transaction(async (tx) => {
-    const data = { accountUsername: input.username, username: input.username, platformUserId: input.openId, accessToken: input.token, refreshToken: input.refreshToken || null, expiresAt: new Date(Date.now() + input.expiresIn * 1000), scope: input.scope || null, status: 'active', active: true };
+    const data = {
+      accountUsername: input.username,
+      username: input.username,
+      platformUserId: input.openId,
+      accessToken: input.token,
+      refreshToken: input.refreshToken || null,
+      expiresAt: new Date(Date.now() + input.expiresIn * 1000),
+      scope: input.scope || null,
+      grantedScopes: JSON.stringify(grantedScopes),
+      status: 'active',
+      active: true,
+      reauthorizationRequired,
+      reauthorizationReason,
+    };
     await tx.accountBinding.upsert({ where: { clientId_platform_accountUsername: { clientId: input.clientId, platform: 'tiktok', accountUsername: input.username } }, update: data, create: { clientId: input.clientId, platform: 'tiktok', ...data } });
-    await tx.auditLog.create({ data: { action: 'oauth_binding_created', actorType: 'oauth', targetType: 'client', targetId: input.clientId, details: JSON.stringify({ provider: 'tiktok' }) } });
+    await tx.auditLog.create({ data: { action: 'oauth_binding_created', actorType: 'oauth', targetType: 'client', targetId: input.clientId, details: JSON.stringify({ provider: 'tiktok', grantedScopes, reauthorizationRequired }) } });
   });
 }
 async function start(req: Request, res: Response, flow: OAuthFlow) {
@@ -75,4 +98,5 @@ router.get('/tiktok/callback', rateLimit('oauth_browser_callback', 30, 10 * 60_0
 });
 router.get('/tiktok/bindings/:clientId', authenticateToken, async (req, res, next) => { try { const clientId = clientIdFromAuth(req, req.params.clientId); const data = await prisma.accountBinding.findMany({ where: { clientId: clientId!, platform: 'tiktok' }, select: { id: true, platform: true, accountUsername: true, username: true, platformUserId: true, status: true, active: true, expiresAt: true, createdAt: true }, orderBy: { createdAt: 'desc' }, take: 20 }); res.json({ success: true, data }); } catch (error) { next(error); } });
 router.delete('/tiktok/bindings/:id', authenticateToken, async (req, res, next) => { try { if (req.auth?.tokenType !== 'admin' && req.auth?.tokenType !== 'client') throw new AppError(403, 'forbidden', 'Insufficient permissions'); const binding = await prisma.accountBinding.findFirst({ where: { id: String(req.params.id), ...(req.auth.tokenType === 'client' ? { clientId: req.auth.clientId } : {}) } }); if (!binding) throw new AppError(404, 'not_found', 'Binding not found'); await prisma.accountBinding.update({ where: { id: binding.id }, data: { active: false, status: 'revoked' } }); res.json({ success: true }); } catch (error) { next(error); } });
+export { REQUIRED_SCOPES };
 export default router;
