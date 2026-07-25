@@ -434,4 +434,46 @@ describe('Phase 1B state machines and task replay protection', () => {
     const uploading = await prisma.publishJob.create({ data: { contentId: uploadingContent.id, accountBindingId: binding.id, platform: 'tiktok', status: 'uploading', activeKey: `${uploadingContent.id}:tiktok` } });
     expect((await request(app).post(`/v1/publish-jobs/${uploading.id}/cancel`).set('Authorization', `Bearer ${adminToken}`)).status).toBe(409);
   });
+
+  it('rejects AI content send without explicit customer AI disclosure acknowledgement', async () => {
+    publisherMock.publishToTikTok.mockClear();
+    const aiContent = await prisma.content.create({ data: { clientId: clientAId, title: 'AI content', description: 'test', videoUrl: 'mock/ai.mp4', platforms: '["tiktok"]', status: 'delivered', aiGenerated: true, aiDisclosureConfirmed: true, aiDisclosureConfirmedAt: new Date() } });
+    const noAck = await request(app).post(`/v1/content/${aiContent.id}/send-to-tiktok`).set('Authorization', `Bearer ${clientAToken}`).send({ clientId: clientAId, contentConfirmed: true });
+    expect(noAck.status).toBe(422);
+    expect(noAck.body.error.code).toBe('ai_disclosure_acknowledgement_required');
+    expect(await prisma.publishJob.count({ where: { contentId: aiContent.id } })).toBe(0);
+    expect(publisherMock.publishToTikTok).not.toHaveBeenCalled();
+  });
+
+  it('allows AI content send with explicit customer AI disclosure acknowledgement', async () => {
+    publisherMock.publishToTikTok.mockClear();
+    const aiContent = await prisma.content.create({ data: { clientId: clientAId, title: 'AI content acked', description: 'test', videoUrl: 'mock/ai-ack.mp4', platforms: '["tiktok"]', status: 'delivered', aiGenerated: true, aiDisclosureConfirmed: true, aiDisclosureConfirmedAt: new Date() } });
+    const acked = await request(app).post(`/v1/content/${aiContent.id}/send-to-tiktok`).set('Authorization', `Bearer ${clientAToken}`).send({ clientId: clientAId, contentConfirmed: true, aiDisclosureAcknowledged: true });
+    expect(acked.status).toBe(202);
+    expect(acked.body.data.publishJobId).toBeDefined();
+    const job = await prisma.publishJob.findUniqueOrThrow({ where: { id: acked.body.data.publishJobId } });
+    expect(job.aiDisclosureRequired).toBe(true);
+    expect(job.aiDisclosureMethod).toBe('customer_confirms_in_tiktok_app');
+    expect(await prisma.auditLog.count({ where: { action: 'tiktok_send_requested', targetId: job.id } })).toBe(1);
+    expect(publisherMock.publishToTikTok).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not require AI acknowledgement for non-AI content', async () => {
+    publisherMock.publishToTikTok.mockClear();
+    const nonAiContent = await prisma.content.create({ data: { clientId: clientAId, title: 'Non-AI content', description: 'test', videoUrl: 'mock/non-ai.mp4', platforms: '["tiktok"]', status: 'delivered', aiGenerated: false } });
+    const result = await request(app).post(`/v1/content/${nonAiContent.id}/send-to-tiktok`).set('Authorization', `Bearer ${clientAToken}`).send({ clientId: clientAId, contentConfirmed: true });
+    expect(result.status).toBe(202);
+    expect(publisherMock.publishToTikTok).toHaveBeenCalledTimes(1);
+  });
+
+  it('confirm endpoint returns 410 Gone and does not create jobs', async () => {
+    publisherMock.publishToTikTok.mockClear();
+    const content = await prisma.content.create({ data: { clientId: clientAId, title: 'Confirm test', description: 'test', videoUrl: 'mock/confirm.mp4', platforms: '["tiktok"]', status: 'delivered' } });
+    const result = await request(app).post(`/v1/content/${content.id}/confirm`).set('Authorization', `Bearer ${clientAToken}`).send({ clientId: clientAId, contentConfirmed: true });
+    expect(result.status).toBe(410);
+    expect(result.headers.deprecation).toBe('true');
+    expect(result.body.error.code).toBe('send_to_tiktok_required');
+    expect(await prisma.publishJob.count({ where: { contentId: content.id } })).toBe(0);
+    expect(publisherMock.publishToTikTok).not.toHaveBeenCalled();
+  });
 });

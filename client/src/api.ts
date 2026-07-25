@@ -291,7 +291,6 @@ export async function retryTikTok(id: string): Promise<SendToTikTokResult> {
     body: JSON.stringify({
       clientId: requireClientId(),
       contentConfirmed: true,
-      aiDisclosureAcknowledged: true,
     }),
   });
   return {

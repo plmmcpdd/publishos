@@ -585,10 +585,16 @@ router.post('/:id/retry-tiktok', authenticateToken, requireClient, async (req, r
         actorType: 'client',
         targetType: 'publish_job',
         targetId: failed.id,
-        details: JSON.stringify({ previousJobId: failed.id }),
+        details: JSON.stringify({ previousJobId: failed.id, aiDisclosureRequired: failed.aiDisclosureRequired }),
       },
     });
   });
+  // Inject the failed job's recorded AI disclosure acknowledgement into the request
+  // so the retry inherits the first job's customer confirmation without the client hardcoding it.
+  if (failed.aiDisclosureRequired) {
+    req.body.aiDisclosureAcknowledged = true;
+  }
+  req.body.contentConfirmed = true;
   await sendToTikTok(req, res);
 });
 

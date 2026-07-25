@@ -101,7 +101,7 @@ export default function QueueScreen() {
   useEffect(() => { void loadContents(); }, [loadContents]);
 
   const handleSendToTikTok = async (content: ContentItem) => {
-    const needsAiAck = content.aiDisclosure?.required && !content.aiDisclosure?.internalReviewConfirmed;
+    const needsAiAck = Boolean(content.aiDisclosure?.required);
     if (needsAiAck && !aiConfirmations[content.id]) {
       setError('Please confirm the AI-generated content disclosure before sending.');
       return;
@@ -182,7 +182,7 @@ export default function QueueScreen() {
         ) : (
           contents.map((content) => {
             const state = content.deliveryState;
-            const needsAiAck = content.aiDisclosure?.required && !content.aiDisclosure?.internalReviewConfirmed;
+            const needsAiAck = Boolean(content.aiDisclosure?.required);
             const isSending = sendingId === content.id;
             const canRetry = content.canRetry && state === 'failed';
 
