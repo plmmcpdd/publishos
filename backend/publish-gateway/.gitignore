@@ -6,6 +6,7 @@ node_modules
 
 uploads/
 dist/
+dist-harness/
 
 /dev.db
 /dev.db-journal
