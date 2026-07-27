@@ -8,7 +8,10 @@
     "start": "node dist/server.js",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
-    "test": "vitest run"
+    "test": "vitest run",
+    "build:harness": "tsc -p tsconfig.harness.json",
+    "test:ops-brain-harness": "npm run build:harness && vitest run test/integration/ops-brain/harness.test.ts",
+    "test:ops-brain-server": "bash test/integration/ops-brain/run-harness.sh"
   },
   "keywords": [],
   "author": "",
