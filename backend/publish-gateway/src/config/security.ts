@@ -26,6 +26,11 @@ export interface HttpSecurityConfig {
   trustProxyHops: number;
 }
 
+export interface OpsBrainBridgeConfig {
+  enabled: boolean;
+  token?: string;
+}
+
 let cachedConfig: SecurityConfig | undefined;
 
 export function loadSecurityConfig(env: NodeJS.ProcessEnv = process.env): SecurityConfig {
@@ -106,10 +111,21 @@ export function loadHttpSecurityConfig(env: NodeJS.ProcessEnv = process.env): Ht
   };
 }
 
+export function loadOpsBrainBridgeConfig(env: NodeJS.ProcessEnv = process.env): OpsBrainBridgeConfig {
+  const enabled = env.OPS_BRAIN_BRIDGE_ENABLED === 'true';
+  if (!enabled) return { enabled: false };
+  const token = env.OPS_BRAIN_BRIDGE_TOKEN || '';
+  if (Buffer.byteLength(token, 'utf8') < 32) {
+    throw new Error('OPS_BRAIN_BRIDGE_TOKEN must be at least 32 bytes when OPS_BRAIN_BRIDGE_ENABLED=true');
+  }
+  return { enabled: true, token };
+}
+
 export function validateRuntimeConfig(env: NodeJS.ProcessEnv = process.env): void {
   loadSecurityConfig(env);
   loadMediaConfig(env);
   loadHttpSecurityConfig(env);
+  loadOpsBrainBridgeConfig(env);
 
   const databaseUrl = env.DATABASE_URL || '';
   if (!databaseUrl) throw new Error('DATABASE_URL must be configured');

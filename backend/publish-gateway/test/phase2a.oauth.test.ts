@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { REQUIRED_SCOPES } from '../src/routes/tiktok';
+import { REQUIRED_TIKTOK_SCOPES as REQUIRED_SCOPES } from '../src/services/tiktok-scopes';
 
 describe('Phase 2A: OAuth scope', () => {
   it('REQUIRED_SCOPES includes video.list', () => {

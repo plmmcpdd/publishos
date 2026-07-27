@@ -5,6 +5,7 @@ import { authenticateToken, clientIdFromAuth } from '../middleware/auth';
 import { AppError } from '../middleware/errors';
 import { consumeOAuthState, createOAuthState, type OAuthFlow } from '../services/oauth-state';
 import { rateLimit } from '../middleware/http-security';
+import { REQUIRED_TIKTOK_SCOPES } from '../services/tiktok-scopes';
 
 const router = Router();
 const TIKTOK_TOKEN_ENDPOINT = 'https://open.tiktokapis.com/v2/oauth/token/';
@@ -20,7 +21,7 @@ function callbackSecurityHeaders(res: Response): string {
 }
 function timeoutSignal(ms = 10_000): AbortSignal { return AbortSignal.timeout(ms); }
 
-const REQUIRED_SCOPES = ['user.info.basic', 'video.upload', 'video.list'];
+const REQUIRED_SCOPES = REQUIRED_TIKTOK_SCOPES;
 
 function authUrl(state: string, redirectUri: string): string {
   const { key } = credentials(); const url = new URL('https://www.tiktok.com/v2/auth/authorize/');

@@ -6,3 +6,8 @@ node_modules
 
 uploads/
 dist/
+
+/dev.db
+/dev.db-journal
+/dev.db-wal
+/dev.db-shm

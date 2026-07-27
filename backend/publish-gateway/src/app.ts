@@ -20,6 +20,8 @@ import mediaRoutes from './routes/media';
 import { corsSecurity, rateLimit } from './middleware/http-security';
 import { loadHttpSecurityConfig } from './config/security';
 import { prisma } from './lib/prisma';
+import opsBrainRoutes from './routes/integrations-ops-brain';
+import { authenticateOpsBrainBridge } from './middleware/ops-brain-bridge-auth';
 
 const deprecated = (_req: express.Request, res: express.Response, next: express.NextFunction) => {
   res.setHeader('Deprecation', 'true');
@@ -48,6 +50,7 @@ export function createApp() {
   app.use('/v1', mediaRoutes);
   app.use('/v1', tiktokRoutes);
   app.use('/v1', uploadRoutes);
+  app.use('/v1/integrations/ops-brain', rateLimit('ops_brain_bridge', 120, 15 * 60_000), authenticateOpsBrainBridge, opsBrainRoutes);
   app.use('/v1', rateLimit('general', 300, 15 * 60_000));
   app.use('/v1/content', contentRoutes);
   app.use('/v1/publish-jobs', publishJobRoutes);
