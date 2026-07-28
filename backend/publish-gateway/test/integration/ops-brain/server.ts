@@ -3,6 +3,7 @@ import { mkdir, rename, rm, writeFile } from 'node:fs/promises';
 import http from 'node:http';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { ensureHarnessDatabase } from './database';
 import { loadFixture } from './fixture';
 import { seedHarness } from './seed';
 
@@ -86,8 +87,8 @@ async function main(): Promise<void> {
   const token = process.env.OPS_BRAIN_BRIDGE_TOKEN || '';
   if (config.bridgeEnabled && Buffer.byteLength(token, 'utf8') < 32) fail('test bridge token must be at least 32 bytes');
   if (!existsSync(config.seed)) fail('seed fixture does not exist');
-  await mkdir(path.dirname(config.database), { recursive: true });
   await rm(config.database, { force: true });
+  await ensureHarnessDatabase(config.database);
 
   process.env.NODE_ENV = 'test';
   process.env.DATABASE_URL = `file:${config.database}`;

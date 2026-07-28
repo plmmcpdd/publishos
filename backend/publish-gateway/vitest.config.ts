@@ -7,6 +7,9 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     fileParallelism: false,
+    // build:harness emits CommonJS integration artifacts; they are runtime
+    // inputs, never a second Vitest test tree.
+    exclude: ['**/node_modules/**', '**/dist/**', '**/dist-harness/**'],
     setupFiles: ['./test/setup/no-network.ts'],
     hookTimeout: 60_000,
   },
