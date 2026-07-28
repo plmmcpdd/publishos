@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, execSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -13,6 +13,10 @@ function setupDir(dir: string) {
   mkdirSync(path.join(dir, 'deploy', 'systemd'), { recursive: true });
   writeFileSync(path.join(dir, 'dist', 'server.js'), '');
   writeFileSync(path.join(dir, 'deploy', 'systemd', 'publishos-staging.service.example'), '');
+}
+
+function setupGitRepo(dir: string) {
+  execSync('git init && git add -A && git -c user.email="test@test" -c user.name="Test" commit -m "initial" --allow-empty', { cwd: dir, stdio: 'pipe' });
 }
 
 function makeEnvFile(dir: string, tokenValue: string, extraLines: string[] = []) {
@@ -32,7 +36,7 @@ function makeEnvFile(dir: string, tokenValue: string, extraLines: string[] = [])
   return envFile;
 }
 
-function runScript(envFile: string, dir: string) {
+function runScript(envFile: string, dir: string, mockBinDir?: string) {
   let stdout = '';
   let stderr = '';
   let status: number | null = null;
@@ -40,7 +44,7 @@ function runScript(envFile: string, dir: string) {
     const out = execFileSync('bash', [script], {
       cwd: dir,
       env: {
-        PATH: process.env.PATH,
+        PATH: mockBinDir ? `${mockBinDir}:${process.env.PATH}` : process.env.PATH,
         HOME: process.env.HOME,
         PUBLISHOS_STAGING_ENV_FILE: envFile,
         NODE_ENV: 'production',
@@ -148,5 +152,64 @@ describe('staging preflight executable matrix', () => {
     expect(existsSync(dollarMarker)).toBe(false);
     expect(existsSync(backtickMarker)).toBe(false);
     expect(stdout + stderr).not.toContain(token);
+  });
+
+  it('fails when git rev-parse HEAD fails', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'preflight-git-fail-'));
+    setupDir(dir);
+    const envFile = makeEnvFile(dir, 'B'.repeat(32));
+    // Create a mock git that fails for rev-parse
+    const wrapperDir = path.join(dir, 'bin');
+    mkdirSync(wrapperDir);
+    writeFileSync(path.join(wrapperDir, 'git'), '#!/bin/bash\nif [[ "$3" == "rev-parse" ]]; then\n  echo "fatal: not a git repository" >&2\n  exit 128\nfi\nexec /usr/bin/git "$@"\n');
+    execSync(`chmod +x ${path.join(wrapperDir, 'git')}`);
+    const result = runScript(envFile, dir, wrapperDir);
+    rmSync(dir, { recursive: true, force: true });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('git rev-parse HEAD failed');
+  });
+
+  it('fails when git returns empty SHA', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'preflight-git-empty-'));
+    setupDir(dir);
+    const envFile = makeEnvFile(dir, 'B'.repeat(32));
+    // Create a mock git that returns empty for rev-parse
+    const wrapperDir = path.join(dir, 'bin');
+    mkdirSync(wrapperDir);
+    writeFileSync(path.join(wrapperDir, 'git'), '#!/bin/bash\nif [[ "$3" == "rev-parse" ]]; then\n  echo ""\n  exit 0\nfi\nexec /usr/bin/git "$@"\n');
+    execSync(`chmod +x ${path.join(wrapperDir, 'git')}`);
+    const result = runScript(envFile, dir, wrapperDir);
+    rmSync(dir, { recursive: true, force: true });
+    // Empty SHA should fail the validation
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('git commit is empty');
+  });
+
+  it('fails when git returns invalid SHA format', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'preflight-git-invalid-'));
+    setupDir(dir);
+    const envFile = makeEnvFile(dir, 'B'.repeat(32));
+    // Create a mock git that returns invalid SHA
+    const wrapperDir = path.join(dir, 'bin');
+    mkdirSync(wrapperDir);
+    writeFileSync(path.join(wrapperDir, 'git'), '#!/bin/bash\nif [[ "$3" == "rev-parse" ]]; then\n  echo "not-a-valid-sha"\n  exit 0\nfi\nexec /usr/bin/git "$@"\n');
+    execSync(`chmod +x ${path.join(wrapperDir, 'git')}`);
+    const result = runScript(envFile, dir, wrapperDir);
+    rmSync(dir, { recursive: true, force: true });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('git commit is not a valid 40-character hex SHA');
+  });
+
+  it('passes with valid git repository and complete SHA', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'preflight-git-valid-'));
+    setupDir(dir);
+    setupGitRepo(dir);
+    const envFile = makeEnvFile(dir, 'B'.repeat(32));
+    const result = runScript(envFile, dir);
+    rmSync(dir, { recursive: true, force: true });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('preflight passed');
+    expect(result.stdout).toMatch(/commit [0-9a-f]{40}/);
+    expect(result.stderr).toBe('');
   });
 });
