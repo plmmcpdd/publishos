@@ -25,9 +25,10 @@ export function sendInternalError(req: Request, res: Response): void {
 export const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
   const requestId = res.locals.requestId || crypto.randomUUID();
   const appError = err instanceof AppError ? err : undefined;
-  const status = appError?.status || 500;
-  const code = appError?.code || 'internal_error';
-  const message = appError?.message || 'Internal server error';
+  const uniqueConstraint = !appError && (err as { code?: unknown })?.code === 'P2002';
+  const status = appError?.status || (uniqueConstraint ? 409 : 500);
+  const code = appError?.code || (uniqueConstraint ? 'conflict' : 'internal_error');
+  const message = appError?.message || (uniqueConstraint ? 'A record with that value already exists' : 'Internal server error');
   console.error(JSON.stringify({ requestId, status, code, actorType: req.auth?.tokenType, resource: req.path }));
   res.status(status).json({ error: { code, message, requestId } });
 };

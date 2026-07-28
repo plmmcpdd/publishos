@@ -1,6 +1,8 @@
-import { prisma } from '../lib/prisma';
-
 const TIKTOK_TOKEN_ENDPOINT = 'https://open.tiktokapis.com/v2/oauth/token/';
+
+async function database() {
+  return (await import('../lib/prisma')).prisma;
+}
 
 export type TikTokTokenBinding = {
   id: string;
@@ -82,6 +84,7 @@ function tokenFields(data: TikTokResponse): {
 }
 
 export async function markBindingExpired(bindingId: string): Promise<void> {
+  const prisma = await database();
   await prisma.accountBinding.updateMany({
     where: { id: bindingId },
     data: { active: false, status: 'expired' },
@@ -89,6 +92,7 @@ export async function markBindingExpired(bindingId: string): Promise<void> {
 }
 
 export async function markBindingReauthorizationRequired(bindingId: string, reason: string): Promise<void> {
+  const prisma = await database();
   await prisma.accountBinding.update({
     where: { id: bindingId },
     data: {
@@ -150,6 +154,7 @@ export async function refreshTikTokToken(binding: TikTokTokenBinding): Promise<s
     throw new TikTokTokenError('tiktok_refresh_failed', 'TikTok token refresh returned an invalid response.', true);
   }
 
+  const prisma = await database();
   await prisma.accountBinding.update({
     where: { id: binding.id },
     data: {

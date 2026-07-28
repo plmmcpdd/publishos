@@ -9,6 +9,7 @@ import { createOrGetActivePublishJob, transitionContent } from '../domain/publis
 import { signedMediaUrl } from '../services/media-signing';
 import { buildTikTokDeliveryContract, normalizeHashtags } from '../services/tiktok-content';
 import { deliveryMessage, deriveDeliveryState } from '../services/publishing-view';
+import { contentRefFromAliases } from '../services/content-ref';
 
 const router = Router();
 const clientVisibleStatuses = ['delivered', 'failed', 'published'] as const;
@@ -49,6 +50,8 @@ const createContentSchema = z.object({
   scheduleAt: z.string().datetime().optional(),
   schedule_at: z.string().datetime().optional(),
   metadata: z.record(z.any()).optional(),
+  contentRef: z.unknown().optional(),
+  content_ref: z.unknown().optional(),
   status: z.enum(['pending_review', 'draft']).optional(),
   assets: z.array(z.object({
     type: z.string(),
@@ -182,6 +185,13 @@ router.post('/', authenticateToken, requireAdmin, async (req, res) => {
   }
 
   const data = parse.data;
+  let contentRef: string | null = null;
+  try {
+    contentRef = contentRefFromAliases(req.body && typeof req.body === 'object' ? req.body : {}).value;
+  } catch (error) {
+    if (error instanceof AppError) throw error;
+    throw error;
+  }
   const clientId = data.clientId || data.client_id!;
   const client = await prisma.client.findUnique({ where: { id: clientId } });
   if (!client) {
@@ -202,6 +212,7 @@ router.post('/', authenticateToken, requireAdmin, async (req, res) => {
   const content = await prisma.content.create({
     data: {
       clientId,
+      contentRef,
       title: data.title,
       description: data.description,
       caption: data.caption,
@@ -239,6 +250,33 @@ router.post('/', authenticateToken, requireAdmin, async (req, res) => {
   });
 
   res.status(201).json({ success: true, data: serializeContent(content, 'admin') });
+});
+
+router.patch('/:contentId/content-ref', authenticateToken, requireAdmin, async (req, res) => {
+  const input = contentRefFromAliases(req.body && typeof req.body === 'object' ? req.body : {});
+  if (!input.provided) throw new AppError(422, 'invalid_content_ref', 'contentRef is required');
+  const contentId = String(req.params.contentId);
+  const updated = await prisma.$transaction(async (tx) => {
+    const existing = await tx.content.findUnique({ where: { id: contentId }, select: { id: true, contentRef: true } });
+    if (!existing) throw new AppError(404, 'not_found', 'Content not found');
+    const content = await tx.content.update({
+      where: { id: existing.id },
+      data: { contentRef: input.value },
+      include: { assets: true, client: { select: safeClient } },
+    });
+    await tx.auditLog.create({
+      data: {
+        action: 'set_content_ref',
+        actorId: req.auth?.sub,
+        actorType: 'admin',
+        targetType: 'content',
+        targetId: existing.id,
+        details: JSON.stringify({ contentId: existing.id, oldContentRef: existing.contentRef, newContentRef: input.value }),
+      },
+    });
+    return content;
+  });
+  res.json({ success: true, data: serializeContent(updated, 'admin') });
 });
 
 router.get('/', authenticateToken, async (req, res) => {

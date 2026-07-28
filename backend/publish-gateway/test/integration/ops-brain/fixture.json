@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "contentRef": "2026-07-20_aaaaaaaaaaaa_example",
+  "clients": [
+    {"id": "example-client-a", "name": "Example Client A", "email": "client-a@example.test"},
+    {"id": "example-client-b", "name": "Example Client B", "email": "client-b@example.test"}
+  ]
+}
