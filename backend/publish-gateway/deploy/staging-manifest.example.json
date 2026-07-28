@@ -1,0 +1,16 @@
+{
+  "publishosCommit": "<git-commit-sha>",
+  "nodeVersion": "<node-version>",
+  "npmVersion": "<npm-version>",
+  "buildArtifactHash": "<sha256>",
+  "databasePath": "/var/lib/publishos-staging/publishos-staging.db",
+  "migrations": "prisma migrate deploy",
+  "host": "127.0.0.1",
+  "port": 3300,
+  "bridgeEnabled": true,
+  "backgroundJobsEnabled": false,
+  "tiktokIntegrationEnabled": false,
+  "deployedAt": "<ISO-8601-timestamp>",
+  "serviceName": "publishos-staging",
+  "tunnelName": "<staging-tunnel-name>"
+}

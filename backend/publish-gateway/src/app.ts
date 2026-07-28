@@ -14,7 +14,7 @@ import metricsRoutes from './routes/metrics';
 import ticketRoutes from './routes/tickets';
 import { languageMiddleware } from './middleware/language';
 import { errorHandler, requestId } from './middleware/errors';
-import { initializeSecurityConfig } from './config/security';
+import { initializeSecurityConfig, loadRuntimeConfig } from './config/security';
 import { authenticateToken, requireAdmin } from './middleware/auth';
 import mediaRoutes from './routes/media';
 import { corsSecurity, rateLimit } from './middleware/http-security';
@@ -31,6 +31,7 @@ const deprecated = (_req: express.Request, res: express.Response, next: express.
 
 export function createApp() {
   initializeSecurityConfig();
+  const runtime = loadRuntimeConfig();
   const app = express();
   app.use(requestId);
   app.set('trust proxy', loadHttpSecurityConfig().trustProxyHops || false);
@@ -48,7 +49,7 @@ export function createApp() {
   });
   app.use('/v1/auth', rateLimit('login', 10, 15 * 60_000), authRoutes);
   app.use('/v1', mediaRoutes);
-  app.use('/v1', tiktokRoutes);
+  if (runtime.tiktokIntegrationEnabled) app.use('/v1', tiktokRoutes);
   app.use('/v1', uploadRoutes);
   app.use('/v1/integrations/ops-brain', rateLimit('ops_brain_bridge', 120, 15 * 60_000), authenticateOpsBrainBridge, opsBrainRoutes);
   app.use('/v1', rateLimit('general', 300, 15 * 60_000));

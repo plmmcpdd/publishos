@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
 import jwt from 'jsonwebtoken';
 import { closeSync, mkdtempSync, openSync, rmSync } from 'node:fs';
@@ -28,6 +28,7 @@ let admin = '';
 let contentA = '';
 const ref = '2026-07-25_ab61ed09f0a1_example-title';
 const bridge = `Bearer ${process.env.OPS_BRAIN_BRIDGE_TOKEN}`;
+const TIMELINE_NOW = new Date('2026-07-28T00:00:00.000Z');
 
 function adminToken() {
   return jwt.sign({ sub: admin, tokenType: 'admin', role: 'admin' }, process.env.JWT_SECRET!, { algorithm: 'HS256', issuer: 'publishos', audience: 'publishos-api', expiresIn: '1h', jwtid: 'ops-brain-admin' });
@@ -83,19 +84,27 @@ describe('Phase 2B-A Ops Brain bridge', () => {
     await request(app).get('/v1/integrations/ops-brain/performance').set('Authorization', bridge).query({ clientId: clientB, contentRef: 'not-this' }).expect(404);
   });
 
-  it('returns latest per-post totals, a filtered timeline, safe fields, and availability', async () => {
-    const response = await request(app).get('/v1/integrations/ops-brain/performance').set('Authorization', bridge).query({ clientId: clientA, contentRef: ref, days: 3 }).expect(200);
-    expect(response.body.schemaVersion).toBe('publishos.ops-brain.performance.v1');
-    expect(response.body.content).toMatchObject({ id: contentA, contentRef: ref, title: 'Example' });
-    expect(response.body.latestTotals).toEqual({ views: 1600, likes: 100, comments: 32, shares: 16, engagementRate: 0.0925 });
-    expect(response.body.posts).toHaveLength(2);
-    const postA = response.body.posts.find((post: { platformPostId: string }) => post.platformPostId === 'post-a');
-    const postB = response.body.posts.find((post: { platformPostId: string }) => post.platformPostId === 'post-b');
-    expect(postA.snapshots).toHaveLength(1);
-    expect(postB.snapshots[0]).toMatchObject({ views: 600, likes: null });
-    expect(response.body.posts.flatMap((post: { snapshots: unknown[] }) => post.snapshots)).not.toContainEqual(expect.objectContaining({ accessToken: expect.anything() }));
-    expect(response.body.availability).toMatchObject({ views: 'available', saves: 'unavailable_from_current_api' });
-    expect(response.body.collection).toMatchObject({ status: 'success', reauthorizationRequired: false });
+  it('uses a fixed UTC clock: includes the exact window boundary and excludes older snapshots', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(TIMELINE_NOW);
+    try {
+      const response = await request(app).get('/v1/integrations/ops-brain/performance').set('Authorization', bridge).query({ clientId: clientA, contentRef: ref, days: 3 }).expect(200);
+      expect(response.body.generatedAt).toBe('2026-07-28T00:00:00.000Z');
+      expect(response.body.schemaVersion).toBe('publishos.ops-brain.performance.v1');
+      expect(response.body.content).toMatchObject({ id: contentA, contentRef: ref, title: 'Example' });
+      expect(response.body.latestTotals).toEqual({ views: 1600, likes: 100, comments: 32, shares: 16, engagementRate: 0.0925 });
+      expect(response.body.posts).toHaveLength(2);
+      const postA = response.body.posts.find((post: { platformPostId: string }) => post.platformPostId === 'post-a');
+      const postB = response.body.posts.find((post: { platformPostId: string }) => post.platformPostId === 'post-b');
+      expect(postA.snapshots).toEqual([expect.objectContaining({ observedAt: '2026-07-25T00:00:00.000Z', views: 1000 })]);
+      expect(postA.snapshots).not.toContainEqual(expect.objectContaining({ observedAt: '2026-07-21T00:00:00.000Z' }));
+      expect(postB.snapshots).toEqual([expect.objectContaining({ observedAt: '2026-07-25T02:00:00.000Z', views: 600, likes: null })]);
+      expect(response.body.posts.flatMap((post: { snapshots: unknown[] }) => post.snapshots)).not.toContainEqual(expect.objectContaining({ accessToken: expect.anything() }));
+      expect(response.body.availability).toMatchObject({ views: 'available', saves: 'unavailable_from_current_api' });
+      expect(response.body.collection).toMatchObject({ status: 'success', reauthorizationRequired: false });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('creates and patches content references with aliases, tenant uniqueness, and audit history', async () => {

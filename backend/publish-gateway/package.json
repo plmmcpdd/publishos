@@ -6,6 +6,7 @@
     "build": "tsc",
     "dev": "nodemon src/server.ts",
     "start": "node dist/server.js",
+    "start:staging": "node --env-file-if-exists=.env.staging dist/server.js",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "test": "vitest run",
