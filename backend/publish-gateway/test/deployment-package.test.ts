@@ -25,5 +25,8 @@ describe('staging deployment package', () => {
     const preflight = read('deploy/staging-preflight.sh');
     expect(preflight).toContain('set -euo pipefail');
     expect(preflight).not.toContain('migrate deploy');
+    expect(preflight).toContain('bridge_token="$(value OPS_BRAIN_BRIDGE_TOKEN)"');
+    expect(preflight).toContain('[[ ${#bridge_token} -ge 32 ]]');
+    expect(preflight).not.toContain('${#$(value OPS_BRAIN_BRIDGE_TOKEN)}');
   });
 });

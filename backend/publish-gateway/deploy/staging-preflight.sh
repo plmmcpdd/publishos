@@ -17,6 +17,7 @@ value() { sed -n "s/^$1=//p" "$env_file" | tail -n 1 | sed 's/^"//;s/"$//'; }
 [[ "$(value TIKTOK_INTEGRATION_ENABLED)" == false ]] || fail "TikTok must be disabled"
 [[ "$(value BACKGROUND_JOBS_ENABLED)" == false ]] || fail "background jobs must be disabled"
 db="$(value DATABASE_URL)"; [[ "$db" == file:/var/lib/publishos-staging/* ]] || fail "DATABASE_URL must be a staging file path"
-[[ ${#$(value OPS_BRAIN_BRIDGE_TOKEN)} -ge 32 ]] || fail "Bridge token is too short"
+bridge_token="$(value OPS_BRAIN_BRIDGE_TOKEN)"
+[[ ${#bridge_token} -ge 32 ]] || fail "Bridge token is too short"
 [[ -f "$root/deploy/systemd/publishos-staging.service.example" ]] || fail "systemd template is missing"
 echo "preflight passed: Node $(node --version), npm $(npm --version), commit $(git -C "$root/../.." rev-parse HEAD)"
