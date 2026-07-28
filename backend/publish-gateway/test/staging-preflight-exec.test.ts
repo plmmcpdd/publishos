@@ -72,7 +72,6 @@ describe('staging preflight executable matrix', () => {
   const token64 = 'A'.repeat(64);
   const token32 = 'B'.repeat(32);
   const token31 = 'C'.repeat(31);
-  const shellToken = '$(touch /tmp/inj)_`echo x`_shor';
 
   it('passes with a 64-character token', () => {
     const { status, stdout, stderr } = runPreflight(token64);
@@ -130,16 +129,24 @@ describe('staging preflight executable matrix', () => {
 
   it('handles shell special characters without command injection', () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'preflight-shell-'));
-    const marker = path.join(tmpdir(), 'preflight-injected-' + Date.now());
+    const id = `${Date.now()}-${process.pid}-${Math.random().toString(36).slice(2)}`;
+    const dollarMarker = path.join(tmpdir(), `preflight-inj-dollar-${id}`);
+    const backtickMarker = path.join(tmpdir(), `preflight-inj-backtick-${id}`);
+    const token = `X$(touch ${dollarMarker})_Y\`touch ${backtickMarker}\`_Z`;
     setupDir(dir);
-    const envFile = makeEnvFile(dir, shellToken);
+    const envFile = makeEnvFile(dir, token);
 
-    const { status, stderr } = runScript(envFile, dir);
+    expect(existsSync(dollarMarker)).toBe(false);
+    expect(existsSync(backtickMarker)).toBe(false);
+
+    const { status, stdout, stderr } = runScript(envFile, dir);
     rmSync(dir, { recursive: true, force: true });
 
-    expect(status).not.toBe(0);
-    expect(stderr).toContain('Bridge token is too short');
-    expect(existsSync(marker)).toBe(false);
-    expect(existsSync('/tmp/injected')).toBe(false);
+    expect(token.length).toBeGreaterThanOrEqual(32);
+    expect(status).toBe(0);
+    expect(stdout).toContain('preflight passed');
+    expect(existsSync(dollarMarker)).toBe(false);
+    expect(existsSync(backtickMarker)).toBe(false);
+    expect(stdout + stderr).not.toContain(token);
   });
 });
