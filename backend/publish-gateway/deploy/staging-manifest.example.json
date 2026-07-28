@@ -1,7 +1,8 @@
 {
   "publishosCommit": "<git-commit-sha>",
-  "nodeVersion": "<node-version>",
+  "nodeVersion": "22.23.1",
   "npmVersion": "<npm-version>",
+  "packageLockHash": "<sha256>",
   "buildArtifactHash": "<sha256>",
   "databasePath": "/var/lib/publishos-staging/publishos-staging.db",
   "migrations": "prisma migrate deploy",
@@ -12,5 +13,6 @@
   "tiktokIntegrationEnabled": false,
   "deployedAt": "<ISO-8601-timestamp>",
   "serviceName": "publishos-staging",
-  "tunnelName": "<staging-tunnel-name>"
+  "appEnvironment": "staging",
+  "rollbackRelease": "<previous-commit-sha>"
 }

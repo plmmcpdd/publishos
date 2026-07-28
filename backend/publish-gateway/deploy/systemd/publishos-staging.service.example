@@ -1,0 +1,22 @@
+[Unit]
+Description=PublishOS Staging Backend
+After=network.target
+
+[Service]
+Type=simple
+User=publishos-staging
+Group=publishos-staging
+WorkingDirectory=/opt/publishos-staging/current/backend/publish-gateway
+EnvironmentFile=/etc/publishos-staging/publishos-staging.env
+ExecStart=/usr/bin/node dist/server.js
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/publishos-staging /var/log/publishos-staging
+
+[Install]
+WantedBy=multi-user.target
