@@ -20,4 +20,7 @@ db="$(value DATABASE_URL)"; [[ "$db" == file:/var/lib/publishos-staging/* ]] || 
 bridge_token="$(value OPS_BRAIN_BRIDGE_TOKEN)"
 [[ ${#bridge_token} -ge 32 ]] || fail "Bridge token is too short"
 [[ -f "$root/deploy/systemd/publishos-staging.service.example" ]] || fail "systemd template is missing"
-echo "preflight passed: Node $(node --version), npm $(npm --version), commit $(git -C "$root/../.." rev-parse HEAD)"
+commit="$(git -C "$root/../.." rev-parse HEAD 2>/dev/null)" || fail "git rev-parse HEAD failed"
+[[ -n "$commit" ]] || fail "git commit is empty"
+[[ "$commit" =~ ^[0-9a-f]{40}$ ]] || fail "git commit is not a valid 40-character hex SHA: $commit"
+echo "preflight passed: Node $(node --version), npm $(npm --version), commit $commit"
