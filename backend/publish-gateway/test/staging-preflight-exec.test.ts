@@ -26,17 +26,19 @@ function makeEnvFile(dir: string, tokenValue: string, extraLines: string[] = [])
     'HOST=127.0.0.1',
     'PORT=3300',
     'DATABASE_URL=file:/var/lib/publishos-staging/test.db',
-    'OPS_BRAIN_BRIDGE_ENABLED=true',
+    'OPS_BRAIN_BRIDGE_ENABLED=false',
     `OPS_BRAIN_BRIDGE_TOKEN=${tokenValue}`,
     'TIKTOK_INTEGRATION_ENABLED=false',
     'BACKGROUND_JOBS_ENABLED=false',
+    'METRICS_CRON_ENABLED=false',
+    'TIKTOK_RECONCILIATION_CRON_ENABLED=false',
     ...extraLines,
   ];
   writeFileSync(envFile, lines.join('\n') + '\n');
   return envFile;
 }
 
-function runScript(envFile: string, dir: string, mockBinDir?: string) {
+function runScript(envFile: string, dir: string, mockBinDir?: string, expectedTikTok?: 'true' | 'false') {
   let stdout = '';
   let stderr = '';
   let status: number | null = null;
@@ -48,6 +50,7 @@ function runScript(envFile: string, dir: string, mockBinDir?: string) {
         HOME: process.env.HOME,
         PUBLISHOS_STAGING_ENV_FILE: envFile,
         NODE_ENV: 'production',
+        ...(expectedTikTok ? { EXPECTED_TIKTOK_INTEGRATION_ENABLED: expectedTikTok } : {}),
       },
       timeout: 15_000,
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -107,6 +110,27 @@ describe('staging preflight executable matrix', () => {
     expect(stderr).toBe('');
   });
 
+  it('passes when TikTok is enabled and explicitly expected', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'preflight-tiktok-enabled-'));
+    setupDir(dir);
+    setupGitRepo(dir);
+    const envFile = makeEnvFile(dir, token32, ['TIKTOK_INTEGRATION_ENABLED=true']);
+    const result = runScript(envFile, dir, undefined, 'true');
+    rmSync(dir, { recursive: true, force: true });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('preflight passed');
+  });
+
+  it('fails closed when TikTok is enabled without an explicit expectation', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'preflight-tiktok-fail-closed-'));
+    setupDir(dir);
+    const envFile = makeEnvFile(dir, token32, ['TIKTOK_INTEGRATION_ENABLED=true']);
+    const result = runScript(envFile, dir);
+    rmSync(dir, { recursive: true, force: true });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('TikTok integration does not match the declared expectation');
+  });
+
   it('fails when OPS_BRAIN_BRIDGE_TOKEN is missing', () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'preflight-missing-'));
     setupDir(dir);
@@ -114,8 +138,9 @@ describe('staging preflight executable matrix', () => {
     writeFileSync(envFile, [
       'APP_ENV=staging', 'HOST=127.0.0.1', 'PORT=3300',
       'DATABASE_URL=file:/var/lib/publishos-staging/test.db',
-      'OPS_BRAIN_BRIDGE_ENABLED=true',
+      'OPS_BRAIN_BRIDGE_ENABLED=false',
       'TIKTOK_INTEGRATION_ENABLED=false', 'BACKGROUND_JOBS_ENABLED=false',
+      'METRICS_CRON_ENABLED=false', 'TIKTOK_RECONCILIATION_CRON_ENABLED=false',
     ].join('\n') + '\n');
 
     const { status, stderr } = runScript(envFile, dir);
@@ -212,4 +237,5 @@ describe('staging preflight executable matrix', () => {
     expect(result.stdout).toMatch(/commit [0-9a-f]{40}/);
     expect(result.stderr).toBe('');
   });
+
 });

@@ -1,20 +1,27 @@
+import { BACKEND_STORAGE_KEY, backendHostname, resolveApiBase } from './api-base';
+export { bindingConnectionChanged } from './tiktok-binding';
+
 // ---- Server URL management ----
-// Priority: localStorage (Settings page) > build-time VITE_API_URL > localhost dev default
-const STORAGE_KEY = 'publishos_backend_url';
 const BUILD_URL = import.meta.env.VITE_API_URL || '';
 const DEV_DEFAULT = 'http://localhost:3000/v1';
+export const APP_ENV = import.meta.env.VITE_APP_ENV || 'development';
+
+// Run before React initializes its session state so a legacy token is never
+// attached to even the first request sent to the current Staging Backend.
+resolveApiBase(localStorage, BUILD_URL, DEV_DEFAULT);
 
 function getApiBase(): string {
-  const saved = localStorage.getItem(STORAGE_KEY);
-  if (saved) return saved;
-  if (BUILD_URL) return BUILD_URL;
-  return DEV_DEFAULT;
+  return resolveApiBase(localStorage, BUILD_URL, DEV_DEFAULT).base;
 }
 
 export const api = {
   get base() { return getApiBase(); },
-  setBase(url: string) { localStorage.setItem(STORAGE_KEY, url); },
-  resetBase() { localStorage.removeItem(STORAGE_KEY); },
+  get hostname() { return backendHostname(getApiBase()); },
+  setBase(url: string) {
+    localStorage.setItem(BACKEND_STORAGE_KEY, url);
+    return getApiBase();
+  },
+  resetBase() { localStorage.removeItem(BACKEND_STORAGE_KEY); },
 };
 
 // ---- Delivery state types ----
@@ -318,35 +325,34 @@ export interface TikTokBinding {
   accountUsername: string;
   username: string;
   displayName?: string;
-  platformUserId?: string;
-  openId?: string;
   status: string;
   active: boolean;
+  grantedScopes?: string[];
+  reauthorizationRequired: boolean;
+  reauthorizationReason?: string | null;
+  updatedAt: string;
 }
 
 export async function fetchTikTokBindings(): Promise<TikTokBinding[]> {
-  const clientId = requireClientId();
   const data = await request<{ success: boolean; data: TikTokBinding[] }>(
-    `/tiktok/bindings/${encodeURIComponent(clientId)}`,
+    '/tiktok/bindings',
   );
-  return data.data;
+  return data.data.filter((binding) => binding.active);
 }
 
 export async function getTikTokAuthUrl(): Promise<string> {
-  const clientId = requireClientId();
   const data = await request<{ success: boolean; data: { authUrl: string } }>(
-    `/tiktok/auth?clientId=${encodeURIComponent(clientId)}`,
+    '/tiktok/auth',
   );
   return data.data.authUrl;
 }
 
 export async function exchangeTikTokCode(code: string, state: string): Promise<{ username: string }> {
-  const clientId = requireClientId();
   const data = await request<{ success: boolean; data: { username: string } }>(
     '/tiktok/exchange',
     {
       method: 'POST',
-      body: JSON.stringify({ code, state, clientId }),
+      body: JSON.stringify({ code, state }),
     },
   );
   return data.data;

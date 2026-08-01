@@ -41,10 +41,13 @@ export interface Client {
 export interface SocialBinding {
   id: string;
   platform: string;
+  accountUsername?: string | null;
   username: string;
   status: string;
-  expiresAt?: string | null;
+  active: boolean;
+  grantedScopes?: string[];
   createdAt: string;
+  updatedAt: string;
   reauthorizationRequired?: boolean;
   reauthorizationReason?: string | null;
   collectionStatus?: string;
@@ -203,17 +206,6 @@ export async function fetchClients(): Promise<Client[]> {
 export async function fetchTikTokBindings(clientId: string): Promise<SocialBinding[]> {
   const data = await request<{ success: boolean; data: SocialBinding[] }>(`/tiktok/bindings/${clientId}`);
   return data.data;
-}
-
-export async function fetchTikTokAuthUrl(clientId: string): Promise<string> {
-  const data = await request<{ success: boolean; data: { authUrl: string } }>(
-    `/tiktok/auth?clientId=${encodeURIComponent(clientId)}`,
-  );
-  return data.data.authUrl;
-}
-
-export async function disconnectTikTokBinding(id: string): Promise<void> {
-  await request(`/tiktok/bindings/${id}`, { method: 'DELETE' });
 }
 
 export async function createClient(input: { name: string; email: string; password: string; industry?: string }): Promise<Client> {

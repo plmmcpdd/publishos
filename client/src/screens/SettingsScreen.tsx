@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useCallback, useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import { api, checkServerConnection, fetchTikTokBindings, getTikTokAuthUrl, disconnectTikTokBinding } from '../api';
+import { APP_ENV, api, bindingConnectionChanged, checkServerConnection, fetchTikTokBindings, getTikTokAuthUrl, disconnectTikTokBinding } from '../api';
 import type { TikTokBinding } from '../api';
 
 function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
@@ -22,8 +22,14 @@ function tikTokBindingLabel(binding: TikTokBinding) {
     || cleanTikTokName(binding.accountUsername);
   if (name) return name.startsWith('@') ? name.slice(1) : name;
 
-  const openId = cleanTikTokName(binding.platformUserId || binding.openId);
-  return openId ? `TikTok User ${openId.slice(-8)}` : 'TikTok Account';
+  return 'TikTok Account';
+}
+
+const REQUIRED_SCOPES = ['video.upload', 'video.list'];
+
+function needsReconnect(binding: TikTokBinding): boolean {
+  const scopes = binding.grantedScopes ?? [];
+  return binding.reauthorizationRequired || REQUIRED_SCOPES.some((scope) => !scopes.includes(scope));
 }
 
 export default function SettingsScreen() {
@@ -32,17 +38,29 @@ export default function SettingsScreen() {
   const [connStatus, setConnStatus] = useState<'connected' | 'failed' | null>(null);
   const [tiktokBindings, setTiktokBindings] = useState<TikTokBinding[]>([]);
   const [bindingLoading, setBindingLoading] = useState(false);
+  const pollInterval = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [notify, setNotify] = useState(true);
   const [launchAtLogin, setLaunchAtLogin] = useState(false);
 
+  const clearBindingPoll = useCallback(() => {
+    if (pollInterval.current) clearInterval(pollInterval.current);
+    if (pollTimeout.current) clearTimeout(pollTimeout.current);
+    pollInterval.current = null;
+    pollTimeout.current = null;
+  }, []);
+
   useEffect(() => {
     fetchTikTokBindings().then(setTiktokBindings).catch(() => {});
-  }, []);
+    return clearBindingPoll;
+  }, [clearBindingPoll]);
 
   const handleConnectTikTok = async () => {
     try {
+      clearBindingPoll();
       setBindingLoading(true);
+      const baseline = tiktokBindings;
       const authUrl = await getTikTokAuthUrl();
       // Open in system browser - TikTok will redirect to server callback
       if (window.electronAPI?.openTikTokAuth) {
@@ -50,20 +68,23 @@ export default function SettingsScreen() {
       } else {
         window.open(authUrl, '_blank');
       }
-      // Poll for new binding (server handles the callback)
-      const pollInterval = setInterval(async () => {
+      // The callback updates an existing row during reauthorization, so poll for
+      // a new active binding or a meaningful active-state/update transition.
+      pollInterval.current = setInterval(async () => {
         try {
           const bindings = await fetchTikTokBindings();
-          if (bindings.length > tiktokBindings.length) {
-            clearInterval(pollInterval);
+          if (bindingConnectionChanged(baseline, bindings)) {
+            clearBindingPoll();
             setTiktokBindings(bindings);
             setBindingLoading(false);
             alert('TikTok connected!');
           }
         } catch { /* keep polling */ }
       }, 2000);
-      // Stop polling after 5 minutes
-      setTimeout(() => { clearInterval(pollInterval); setBindingLoading(false); }, 300000);
+      pollTimeout.current = setTimeout(() => {
+        clearBindingPoll();
+        setBindingLoading(false);
+      }, 300000);
     } catch (err) {
       alert(`Error: ${err instanceof Error ? err.message : 'Unknown error'}`);
       setBindingLoading(false);
@@ -121,16 +142,20 @@ export default function SettingsScreen() {
                   <div style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700 }}>TikTok</div>
                   <div style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 500 }}>
                     {tikTokBindingLabel(binding)}
-                    {binding.status === 'active' ? ' · Connected' : ' · Expired'}
+                    {needsReconnect(binding) ? ' · Reconnect required' : ' · Connected'}
                   </div>
                 </div>
               </div>
-              <button
-                className="btn btn-secondary"
-                onClick={() => void handleDisconnect(binding.id)}
-              >
-                Disconnect
-              </button>
+              <div style={{ display: 'flex', gap: 8 }}>
+                {needsReconnect(binding) && (
+                  <button className="btn btn-primary" onClick={() => void handleConnectTikTok()} disabled={bindingLoading}>
+                    {bindingLoading ? 'Connecting...' : 'Reconnect TikTok'}
+                  </button>
+                )}
+                <button className="btn btn-secondary" onClick={() => void handleDisconnect(binding.id)}>
+                  Disconnect
+                </button>
+              </div>
             </div>
           </div>
         ))
@@ -139,6 +164,20 @@ export default function SettingsScreen() {
       <div className="section-label" style={{ marginTop: 8 }}>{t('settings.preferences')}</div>
 
       <div className="card" style={{ margin: '0 16px 14px' }}>
+        <div className="setting-row">
+          <div>
+            <div className="setting-label">Environment</div>
+            <div className="setting-desc">This build is connected to the {APP_ENV} environment.</div>
+          </div>
+          <strong>{APP_ENV === 'staging' ? 'STAGING' : APP_ENV.toUpperCase()}</strong>
+        </div>
+        <div className="setting-row">
+          <div>
+            <div className="setting-label">Backend hostname</div>
+            <div className="setting-desc">Current server used by this client.</div>
+          </div>
+          <code>{api.hostname}</code>
+        </div>
         <div className="setting-row">
           <div>
             <div className="setting-label">{t('settings.systemTrayNotifications')}</div>
@@ -192,7 +231,8 @@ export default function SettingsScreen() {
             />
             <button
               onClick={async () => {
-                api.setBase(backendUrl);
+                const resolvedUrl = api.setBase(backendUrl);
+                setBackendUrl(resolvedUrl);
                 const result = await checkServerConnection();
                 setConnStatus(result.ok ? 'connected' : 'failed');
                 setTimeout(() => setConnStatus(null), 3000);
