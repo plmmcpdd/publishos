@@ -1,4 +1,6 @@
-export const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3000/v1';
+import { resolveApiBase } from './api-base';
+
+export const API_BASE = resolveApiBase(import.meta.env.VITE_API_URL);
 
 export const api = {
   base: API_BASE,
