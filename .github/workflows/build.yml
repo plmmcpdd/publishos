@@ -28,10 +28,8 @@ jobs:
         shell: bash
       - name: Build Windows
         if: matrix.os == 'windows-latest'
-        run: cd client && npm run build:win
+        run: cd client && npm run build:win:staging
         shell: bash
-        env:
-          VITE_API_URL: ${{ vars.VITE_API_URL || '' }}
       - name: Build Mac
         if: matrix.os == 'macos-latest'
         run: cd client && npm run build:mac

@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import { Request, Response, Router } from 'express';
 import { prisma } from '../lib/prisma';
-import { authenticateToken, clientIdFromAuth } from '../middleware/auth';
+import { authenticateToken, clientIdFromAuth, requireClient } from '../middleware/auth';
 import { AppError } from '../middleware/errors';
 import { consumeOAuthState, createOAuthState, type OAuthFlow } from '../services/oauth-state';
 import { rateLimit } from '../middleware/http-security';
@@ -70,8 +70,28 @@ async function saveBinding(input: { clientId: string; username: string; openId: 
       reauthorizationRequired,
       reauthorizationReason,
     };
-    await tx.accountBinding.upsert({ where: { clientId_platform_accountUsername: { clientId: input.clientId, platform: 'tiktok', accountUsername: input.username } }, update: data, create: { clientId: input.clientId, platform: 'tiktok', ...data } });
-    await tx.auditLog.create({ data: { action: 'oauth_binding_created', actorType: 'oauth', targetType: 'client', targetId: input.clientId, details: JSON.stringify({ provider: 'tiktok', grantedScopes, reauthorizationRequired }) } });
+    const existing = await tx.accountBinding.findFirst({
+      where: {
+        clientId: input.clientId,
+        platform: 'tiktok',
+        OR: [{ platformUserId: input.openId }, { accountUsername: input.username }],
+      },
+      select: { id: true, active: true },
+    });
+    if (existing) {
+      await tx.accountBinding.update({ where: { id: existing.id }, data });
+    } else {
+      await tx.accountBinding.create({ data: { clientId: input.clientId, platform: 'tiktok', ...data } });
+    }
+    await tx.auditLog.create({
+      data: {
+        action: existing && !existing.active ? 'oauth_binding_restored' : 'oauth_binding_connected',
+        actorType: 'oauth',
+        targetType: 'client',
+        targetId: input.clientId,
+        details: JSON.stringify({ provider: 'tiktok', grantedScopes, reauthorizationRequired }),
+      },
+    });
   });
 }
 async function start(req: Request, res: Response, flow: OAuthFlow) {
@@ -81,10 +101,10 @@ async function start(req: Request, res: Response, flow: OAuthFlow) {
   const state = await createOAuthState({ clientId, flow, redirectUri, actorId: req.auth?.sub });
   res.json({ success: true, data: { authUrl: authUrl(state, redirectUri), expires_at: new Date(Date.now() + 600_000).toISOString() } });
 }
-router.get('/tiktok/auth', authenticateToken, rateLimit('oauth_browser_start', 30, 10 * 60_000), (req, res, next) => { void start(req, res, 'browser').catch(next); });
-router.get('/tiktok/auth-url', authenticateToken, rateLimit('oauth_electron_start', 30, 10 * 60_000), (req, res, next) => { void start(req, res, 'electron').catch(next); });
+router.get('/tiktok/auth', authenticateToken, requireClient, rateLimit('oauth_browser_start', 30, 10 * 60_000), (req, res, next) => { void start(req, res, 'browser').catch(next); });
+router.get('/tiktok/auth-url', authenticateToken, requireClient, rateLimit('oauth_electron_start', 30, 10 * 60_000), (req, res, next) => { void start(req, res, 'electron').catch(next); });
 
-router.post('/tiktok/exchange', authenticateToken, rateLimit('oauth_electron_exchange', 30, 10 * 60_000), async (req, res, next) => {
+router.post('/tiktok/exchange', authenticateToken, requireClient, rateLimit('oauth_electron_exchange', 30, 10 * 60_000), async (req, res, next) => {
   try { const scoped = clientIdFromAuth(req, req.body?.clientId); credentials(); const code = typeof req.body?.code === 'string' ? req.body.code : ''; const state = typeof req.body?.state === 'string' ? req.body.state : ''; if (!code || !state) throw new AppError(400, 'validation_error', 'code and state are required');
     if (!scoped) throw new AppError(403, 'tenant_mismatch', 'Tenant does not match token');
     const consumed = await consumeOAuthState({ state, flow: 'electron', redirectUri: ELECTRON_REDIRECT_URI, expectedClientId: scoped });
@@ -97,7 +117,96 @@ router.get('/tiktok/callback', rateLimit('oauth_browser_callback', 30, 10 * 60_0
     const nonce = callbackSecurityHeaders(res); res.type('html').send(`<html><body style="font-family:sans-serif;text-align:center;padding:50px"><h1>TikTok Connected!</h1><p>Account: @${escapeHtml(username)}</p><p>You can close this window and return to PublishOS.</p><script nonce="${escapeHtml(nonce)}">setTimeout(function(){window.close()},3000)</script></body></html>`);
   } catch (error) { next(error); }
 });
-router.get('/tiktok/bindings/:clientId', authenticateToken, async (req, res, next) => { try { const clientId = clientIdFromAuth(req, req.params.clientId); const data = await prisma.accountBinding.findMany({ where: { clientId: clientId!, platform: 'tiktok' }, select: { id: true, platform: true, accountUsername: true, username: true, platformUserId: true, status: true, active: true, expiresAt: true, createdAt: true }, orderBy: { createdAt: 'desc' }, take: 20 }); res.json({ success: true, data }); } catch (error) { next(error); } });
-router.delete('/tiktok/bindings/:id', authenticateToken, async (req, res, next) => { try { if (req.auth?.tokenType !== 'admin' && req.auth?.tokenType !== 'client') throw new AppError(403, 'forbidden', 'Insufficient permissions'); const binding = await prisma.accountBinding.findFirst({ where: { id: String(req.params.id), ...(req.auth.tokenType === 'client' ? { clientId: req.auth.clientId } : {}) } }); if (!binding) throw new AppError(404, 'not_found', 'Binding not found'); await prisma.accountBinding.update({ where: { id: binding.id }, data: { active: false, status: 'revoked' } }); res.json({ success: true }); } catch (error) { next(error); } });
+
+const safeBindingSelect = {
+  id: true,
+  platform: true,
+  accountUsername: true,
+  username: true,
+  status: true,
+  active: true,
+  grantedScopes: true,
+  reauthorizationRequired: true,
+  reauthorizationReason: true,
+  collectionStatus: true,
+  lastCollectionAttemptAt: true,
+  lastCollectionSuccessAt: true,
+  updatedAt: true,
+  createdAt: true,
+} as const;
+
+function publicScopes(value: string | null): string[] {
+  if (!value) return [];
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.filter((scope): scope is string => typeof scope === 'string') : [];
+  } catch { return []; }
+}
+
+async function listBindings(req: Request, res: Response, suppliedClientId?: string) {
+  const clientId = clientIdFromAuth(req, suppliedClientId);
+  if (!clientId) throw new AppError(400, 'validation_error', 'clientId is required');
+  const bindings = await prisma.accountBinding.findMany({
+    where: { clientId, platform: 'tiktok', active: true },
+    select: safeBindingSelect,
+    orderBy: { updatedAt: 'desc' },
+    take: 20,
+  });
+  const data = bindings.map(({ grantedScopes, ...binding }) => ({
+    ...binding,
+    grantedScopes: publicScopes(grantedScopes),
+  }));
+  res.json({ success: true, data });
+}
+
+router.get('/tiktok/bindings', authenticateToken, requireClient, async (req, res, next) => {
+  try { await listBindings(req, res); } catch (error) { next(error); }
+});
+
+router.get('/tiktok/bindings/:clientId', authenticateToken, async (req, res, next) => {
+  try { await listBindings(req, res, String(req.params.clientId)); } catch (error) { next(error); }
+});
+
+router.delete('/tiktok/bindings/:id', authenticateToken, requireClient, async (req, res, next) => {
+  try {
+    const binding = await prisma.accountBinding.findFirst({
+      where: { id: String(req.params.id), clientId: req.auth!.tokenType === 'client' ? req.auth!.clientId : '' },
+    });
+    if (!binding) throw new AppError(404, 'not_found', 'Binding not found');
+    const needsSanitizing = binding.active || binding.status !== 'revoked' || Boolean(
+      binding.accessToken || binding.refreshToken || binding.expiresAt || binding.scope ||
+      binding.grantedScopes || binding.reauthorizationRequired || binding.reauthorizationReason,
+    );
+    if (needsSanitizing) {
+      await prisma.$transaction([
+        prisma.accountBinding.update({
+          where: { id: binding.id },
+          data: {
+            active: false,
+            status: 'revoked',
+            accessToken: null,
+            refreshToken: null,
+            expiresAt: null,
+            scope: null,
+            grantedScopes: null,
+            reauthorizationRequired: false,
+            reauthorizationReason: null,
+          },
+        }),
+        prisma.auditLog.create({
+          data: {
+            action: 'oauth_binding_disconnected',
+            actorType: 'client',
+            actorId: req.auth!.sub,
+            targetType: 'account_binding',
+            targetId: binding.id,
+            details: JSON.stringify({ provider: 'tiktok', localCredentialsDestroyed: true }),
+          },
+        }),
+      ]);
+    }
+    res.json({ success: true });
+  } catch (error) { next(error); }
+});
 export { REQUIRED_SCOPES };
 export default router;

@@ -1,10 +1,5 @@
 import { useEffect, useState } from 'react';
-import {
-  disconnectTikTokBinding,
-  fetchClients,
-  fetchTikTokAuthUrl,
-  fetchTikTokBindings,
-} from '../api';
+import { fetchClients, fetchTikTokBindings } from '../api';
 import type { Client, SocialBinding } from '../api';
 
 export default function SocialAccounts() {
@@ -42,42 +37,15 @@ export default function SocialAccounts() {
     }
   };
 
-  const connectTikTok = async () => {
-    if (!selectedClient) return;
-    try {
-      const authUrl = await fetchTikTokAuthUrl(selectedClient);
-      window.open(authUrl, '_blank', 'noopener,noreferrer');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '启动 TikTok 授权失败');
-    }
-  };
-
-  const disconnect = async (id: string) => {
-    if (!confirm('确定解绑该 TikTok 账号？')) return;
-    try {
-      await disconnectTikTokBinding(id);
-      await loadBindings(selectedClient);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '解绑失败');
-    }
-  };
+  const selectedClientName = clients.find((client) => client.id === selectedClient)?.name ?? '';
 
   return (
     <div>
-      <div className="mb-6 flex items-center justify-between">
+      <div className="mb-6">
         <div>
           <h3 className="text-lg font-medium">社交账号</h3>
-          <p className="mt-1 text-sm text-gray-500">绑定客户的 TikTok 账号以自动发布内容。</p>
+          <p className="mt-1 text-sm text-gray-500">只读查看客户的 TikTok 连接健康与数据采集状态。</p>
         </div>
-        {selectedClient && (
-          <button
-            type="button"
-            onClick={() => void connectTikTok()}
-            className="rounded-lg bg-black px-4 py-2 text-sm font-medium text-white hover:bg-gray-800"
-          >
-            绑定 TikTok
-          </button>
-        )}
       </div>
 
       {error && <div className="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
@@ -107,30 +75,34 @@ export default function SocialAccounts() {
           <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4">
             <div>
               <h4 className="font-medium">TikTok</h4>
-              <p className="text-sm text-gray-500">{bindings.length} 个已绑定账号</p>
+              <p className="text-sm text-gray-500">客户：{selectedClientName} · {bindings.length} 个当前连接</p>
             </div>
           </div>
 
           {bindings.length === 0 ? (
-            <div className="px-5 py-8 text-center text-sm text-gray-500">暂无 TikTok 账号绑定</div>
+            <div className="px-5 py-8 text-center text-sm text-gray-500">
+              客户尚未连接 TikTok。请客户在 PublishOS Client 的 Settings 中完成连接。
+            </div>
           ) : (
             <div className="divide-y divide-gray-100">
               {bindings.map((binding) => (
-                <div key={binding.id} className="flex items-center justify-between px-5 py-4">
-                  <div>
-                    <p className="font-medium">@{binding.username}</p>
+                <div key={binding.id} className="grid gap-3 px-5 py-4 md:grid-cols-2">
+                  <div className="space-y-1">
+                    <p className="font-medium">@{binding.username || binding.accountUsername || 'TikTok Account'}</p>
+                    <p className="text-sm text-gray-500">当前连接状态：{binding.status === 'active' ? '已连接' : binding.status}</p>
                     <p className="text-sm text-gray-500">
-                      状态：{binding.status === 'active' ? '已连接' : binding.status}
-                      {binding.expiresAt ? ` / 过期时间：${new Date(binding.expiresAt).toLocaleDateString()}` : ''}
+                      已授权 scopes：{binding.grantedScopes?.length ? binding.grantedScopes.join(', ') : '无'}
+                    </p>
+                    {binding.reauthorizationRequired && (
+                      <p className="text-sm font-medium text-amber-700">需要客户在 PublishOS Client 中重新授权。</p>
+                    )}
+                  </div>
+                  <div className="space-y-1 md:text-right">
+                    <p className="text-sm text-gray-500">数据采集状态：{binding.collectionStatus || 'idle'}</p>
+                    <p className="text-sm text-gray-500">
+                      最近成功采集时间：{binding.lastCollectionSuccessAt ? new Date(binding.lastCollectionSuccessAt).toLocaleString() : '暂无'}
                     </p>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => void disconnect(binding.id)}
-                    className="rounded bg-red-600 px-3 py-1 text-sm text-white hover:bg-red-500"
-                  >
-                    解绑
-                  </button>
                 </div>
               ))}
             </div>

@@ -139,6 +139,54 @@ describe('Phase 1A authentication and tenant isolation', () => {
     expect(queue.body.queue).toHaveLength(0);
   });
 
+  it('keeps admin binding access read-only and token-free', async () => {
+    const binding = await prisma.accountBinding.create({
+      data: {
+        clientId: clientAId, platform: 'tiktok', accountUsername: 'admin-safe-view',
+        accessToken: 'access-value-must-not-leave-api', refreshToken: 'refresh-value-must-not-leave-api',
+        expiresAt: new Date(Date.now() + 60_000), scope: 'video.upload', grantedScopes: '["video.upload"]',
+      },
+    });
+    const list = await request(app).get(`/v1/tiktok/bindings/${clientAId}`).set('Authorization', `Bearer ${adminToken}`);
+    expect(list.status).toBe(200);
+    const item = list.body.data.find((candidate: { id: string }) => candidate.id === binding.id);
+    expect(item).toBeDefined();
+    expect(item).not.toHaveProperty('accessToken');
+    expect(item).not.toHaveProperty('refreshToken');
+    expect(item).not.toHaveProperty('expiresAt');
+    expect(item).not.toHaveProperty('platformUserId');
+    expect(await request(app).delete(`/v1/tiktok/bindings/${binding.id}`).set('Authorization', `Bearer ${adminToken}`)).toMatchObject({ status: 403 });
+  });
+
+  it('hides revoked bindings and disconnects safely and idempotently', async () => {
+    const binding = await prisma.accountBinding.create({
+      data: {
+        clientId: clientAId, platform: 'tiktok', accountUsername: 'disconnect-test',
+        platformUserId: 'private-platform-id', accessToken: 'private-access', refreshToken: 'private-refresh',
+        expiresAt: new Date(Date.now() + 60_000), scope: 'video.upload video.list',
+        grantedScopes: '["video.upload","video.list"]', reauthorizationRequired: true,
+        reauthorizationReason: 'test reason', active: true, status: 'active',
+      },
+    });
+    const first = await request(app).delete(`/v1/tiktok/bindings/${binding.id}`).set('Authorization', `Bearer ${clientAToken}`);
+    const second = await request(app).delete(`/v1/tiktok/bindings/${binding.id}`).set('Authorization', `Bearer ${clientAToken}`);
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    const stored = await prisma.accountBinding.findUniqueOrThrow({ where: { id: binding.id } });
+    expect(stored).toMatchObject({
+      active: false, status: 'revoked', accessToken: null, refreshToken: null, expiresAt: null,
+      scope: null, grantedScopes: null, reauthorizationRequired: false, reauthorizationReason: null,
+    });
+    const clientList = await request(app).get('/v1/tiktok/bindings').set('Authorization', `Bearer ${clientAToken}`);
+    const adminList = await request(app).get(`/v1/tiktok/bindings/${clientAId}`).set('Authorization', `Bearer ${adminToken}`);
+    expect(clientList.body.data.some((candidate: { id: string }) => candidate.id === binding.id)).toBe(false);
+    expect(adminList.body.data.some((candidate: { id: string }) => candidate.id === binding.id)).toBe(false);
+    const logs = await prisma.auditLog.findMany({ where: { targetId: binding.id } });
+    expect(logs).toHaveLength(1);
+    expect(JSON.stringify(logs)).not.toContain('private-access');
+    expect(JSON.stringify(logs)).not.toContain('private-refresh');
+  });
+
   it('guards TikTok initiation, uploads, publish jobs, and legacy routes', async () => {
     expect((await request(app).get(`/v1/tiktok/auth?clientId=${clientBId}`).set('Authorization', `Bearer ${clientAToken}`)).status).toBe(403);
     expect((await request(app).get(`/v1/tiktok/auth?clientId=${clientAId}`).set('Authorization', `Bearer ${clientAToken}`)).status).toBe(500);

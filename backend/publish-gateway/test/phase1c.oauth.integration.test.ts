@@ -76,6 +76,42 @@ beforeEach(() => {
   mockFetchForTikTok();
 });
 
+describe('Client-owned binding lifecycle hotfix', () => {
+  it('restores the same revoked TikTok account binding on OAuth callback', async () => {
+    const existing = await prisma.accountBinding.findFirst({
+      where: { clientId: clientAId, platform: 'tiktok', platformUserId: mockTikTokTokenResponse.data.open_id },
+    });
+    const revoked = existing
+      ? await prisma.accountBinding.update({
+          where: { id: existing.id },
+          data: { active: false, status: 'revoked', accessToken: null, refreshToken: null, expiresAt: null, scope: null, grantedScopes: null },
+        })
+      : await prisma.accountBinding.create({
+          data: {
+            clientId: clientAId, platform: 'tiktok', accountUsername: mockTikTokUserResponse.data.user.display_name,
+            username: mockTikTokUserResponse.data.user.display_name, platformUserId: mockTikTokTokenResponse.data.open_id,
+            active: false, status: 'revoked',
+          },
+        });
+    const previousScope = mockTikTokTokenResponse.data.scope;
+    mockTikTokTokenResponse.data.scope = 'user.info.basic,video.upload,video.list';
+    try {
+      const stateResponse = await request(app).get('/v1/tiktok/auth').set('Authorization', `Bearer ${clientAToken}`);
+      const state = new URL(stateResponse.body.data.authUrl).searchParams.get('state')!;
+      const callback = await request(app).get(`/v1/tiktok/callback?state=${state}&code=test-code`);
+      expect(callback.status).toBe(200);
+      const restored = await prisma.accountBinding.findUniqueOrThrow({ where: { id: revoked.id } });
+      expect(restored).toMatchObject({ active: true, status: 'active', reauthorizationRequired: false });
+      expect(restored.accessToken).toBeTruthy();
+      expect(restored.refreshToken).toBeTruthy();
+      expect(restored.expiresAt).toBeInstanceOf(Date);
+      expect(restored.grantedScopes).toContain('video.list');
+    } finally {
+      mockTikTokTokenResponse.data.scope = previousScope;
+    }
+  });
+});
+
 afterAll(() => {
   globalThis.fetch = originalFetch;
 });
@@ -205,15 +241,16 @@ describe('OAuth Endpoint Integration - Start Endpoints', () => {
       expect(res.status).toBe(403);
     });
 
-    it('allows Admin to create state for specified Client', async () => {
-      const res = await request(app)
+    it('rejects Admin creating OAuth state for a Client', async () => {
+      const browser = await request(app)
         .get(`/v1/tiktok/auth?clientId=${clientAId}`)
         .set('Authorization', `Bearer ${adminToken}`);
+      const electron = await request(app)
+        .get(`/v1/tiktok/auth-url?clientId=${clientAId}`)
+        .set('Authorization', `Bearer ${adminToken}`);
 
-      expect(res.status).toBe(200);
-      expect(res.body.success).toBe(true);
-      expect(res.body.data.authUrl).toBeDefined();
-      expect(res.body.data.expires_at).toBeDefined();
+      expect(browser.status).toBe(403);
+      expect(electron.status).toBe(403);
     });
 
     it('allows Client to create state for itself', async () => {
@@ -680,24 +717,11 @@ describe('OAuth Endpoint Integration - State Rejection Paths', () => {
       expect(tiktokTokenCalls).toBe(0);
     });
 
-    it('rejects Admin/Client permission scope mismatch', async () => {
-      // Admin can create state for any client, but exchange must match
-      const adminRes = await request(app)
-        .get(`/v1/tiktok/auth-url?clientId=${clientBId}`)
-        .set('Authorization', `Bearer ${adminToken}`);
-
-      const adminUrl = new URL(adminRes.body.data.authUrl);
-      const adminState = adminUrl.searchParams.get('state')!;
-
-      // Try to exchange with Client A token
+    it('rejects Admin exchange', async () => {
       const res = await request(app)
         .post('/v1/tiktok/exchange')
-        .set('Authorization', `Bearer ${clientAToken}`)
-        .send({
-          clientId: clientBId,
-          code: 'test-code',
-          state: adminState
-        });
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ code: 'test-code', state: validElectronState });
 
       expect(res.status).toBe(403);
       expect(tiktokTokenCalls).toBe(0);
