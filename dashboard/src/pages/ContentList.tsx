@@ -37,6 +37,11 @@ function formatDate(value?: string) {
   return new Date(value).toLocaleString();
 }
 
+function bindingCanTargetTikTok(binding: SocialBinding) {
+  return binding.active && binding.status === 'active' && !binding.reauthorizationRequired
+    && Boolean(binding.grantedScopes?.includes('video.upload'));
+}
+
 export default function ContentList() {
   const [contents, setContents] = useState<ContentItem[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
@@ -76,6 +81,7 @@ export default function ContentList() {
     }
 
     if (newContent.platform === 'tiktok' && !newContent.targetAccountBindingId) { setError('请选择目标 TikTok 账号'); return; }
+    if (newContent.platform === 'tiktok' && !bindings.some((binding) => binding.id === newContent.targetAccountBindingId && bindingCanTargetTikTok(binding))) { setError('请选择有效的 TikTok 目标账号'); return; }
     try { setActionId('create'); await createContent(newContent); setShowCreate(false); setNewContent(emptyContent); setBindings([]); await loadContents(); }
     catch (err) { setError(err instanceof Error ? err.message : '创建失败'); } finally { setActionId(null); }
   };
@@ -181,7 +187,7 @@ export default function ContentList() {
             {newContent.platform === 'tiktok' && newContent.clientId && (
               <select value={newContent.targetAccountBindingId} onChange={(event) => setNewContent({ ...newContent, targetAccountBindingId: event.target.value })} className="border rounded px-3 py-2 col-span-2" required>
                 <option value="">选择目标 TikTok 账号</option>
-                {bindings.map((binding) => <option key={binding.id} value={binding.id} disabled={!binding.active || binding.status !== 'active' || binding.reauthorizationRequired}>{`@${binding.username || binding.accountUsername || 'TikTok'} · ${binding.reauthorizationRequired ? 'Reconnect required' : 'Connected'}`}</option>)}
+                {bindings.map((binding) => <option key={binding.id} value={binding.id} disabled={!bindingCanTargetTikTok(binding)}>{`@${binding.username || binding.accountUsername || 'TikTok'} · ${binding.reauthorizationRequired ? 'Reconnect required' : !binding.grantedScopes?.includes('video.upload') ? 'video.upload required' : 'Connected'}`}</option>)}
               </select>
             )}
             {newContent.platform === 'tiktok' && newContent.clientId && bindings.length === 0 && <p className="text-sm text-red-600 col-span-2">该客户没有有效 TikTok 账号，请先在客户端连接账号。</p>}

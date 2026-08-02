@@ -30,7 +30,7 @@ export interface ContentItem {
   thumbnail_url?: string;
   thumbnailUrl?: string;
   videoUrl?: string;
-  targetAccountBinding?: Pick<SocialBinding, 'id' | 'accountUsername' | 'username' | 'status' | 'active' | 'reauthorizationRequired'> | null;
+  targetAccountBinding?: Pick<SocialBinding, 'id' | 'accountUsername' | 'username' | 'status' | 'active' | 'reauthorizationRequired' | 'grantedScopes'> | null;
 }
 
 export interface Client {

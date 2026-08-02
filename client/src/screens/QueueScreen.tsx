@@ -78,6 +78,11 @@ function isActiveDelivery(state?: DeliveryState): boolean {
   return state === 'send_requested' || state === 'tiktok_initializing' || state === 'uploading_video' || state === 'tiktok_processing' || state === 'sent_to_tiktok' || state === 'waiting_for_final_tiktok_publish';
 }
 
+function targetCanSend(target: ContentItem['targetAccountBinding']): boolean {
+  return Boolean(target && target.active && target.status === 'active' && !target.reauthorizationRequired
+    && target.grantedScopes?.includes('video.upload'));
+}
+
 export default function QueueScreen() {
   const [contents, setContents] = useState<ContentItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -102,7 +107,7 @@ export default function QueueScreen() {
 
   const handleSendToTikTok = async (content: ContentItem) => {
     if (!content.targetAccountBinding) { setError('This content has no target TikTok account. Ask your operator to assign one.'); return; }
-    if (!content.targetAccountBinding.active || content.targetAccountBinding.status !== 'active' || content.targetAccountBinding.reauthorizationRequired) { setError('The target TikTok account requires reconnection before sending.'); return; }
+    if (!targetCanSend(content.targetAccountBinding)) { setError('The target TikTok account is unavailable or lacks video.upload. Reconnect it before sending.'); return; }
     const needsAiAck = Boolean(content.aiDisclosure?.required);
     if (needsAiAck && !aiConfirmations[content.id]) {
       setError('Please confirm the AI-generated content disclosure before sending.');
@@ -188,7 +193,7 @@ export default function QueueScreen() {
             const needsAiAck = Boolean(content.aiDisclosure?.required);
             const isSending = sendingId === content.id;
             const canRetry = content.canRetry && state === 'failed';
-            const targetAvailable = Boolean(content.targetAccountBinding && content.targetAccountBinding.active && content.targetAccountBinding.status === 'active' && !content.targetAccountBinding.reauthorizationRequired);
+            const targetAvailable = targetCanSend(content.targetAccountBinding);
 
             return (
               <div key={content.id} className="card">
