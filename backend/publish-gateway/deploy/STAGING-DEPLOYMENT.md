@@ -1,5 +1,26 @@
 # PublishOS staging deployment (template)
 
+## Release layout
+
+The Backend release directory is consumed directly by the systemd unit through
+the `current` symlink. Each immutable release **must** preserve this repository
+path below the release root:
+
+```
+backend/publish-gateway/
+  dist/
+  node_modules/
+  package.json
+  package-lock.json
+  prisma/
+  prisma.config.ts
+  deploy/
+```
+
+Do not flatten `publish-gateway` into the release root: the service working
+directory is `current/backend/publish-gateway`, and a flattened release cannot
+start. Dashboard releases remain static files at their own release root.
+
 Cloudflare Tunnel is intentionally out of scope for this gate. Use a later gate to assign the HTTPS domain.
 
 1. **Server, sudo:** install Node 22.23.1 and create the non-login `publishos-staging` user.

@@ -29,4 +29,9 @@ describe('staging deployment package', () => {
     expect(preflight).toContain('[[ ${#bridge_token} -ge 32 ]]');
     expect(preflight).not.toContain('${#$(value OPS_BRAIN_BRIDGE_TOKEN)}');
   });
+  it('documents the systemd-compatible immutable Backend release layout', () => {
+    const guide = read('deploy/STAGING-DEPLOYMENT.md');
+    expect(guide).toContain('backend/publish-gateway');
+    expect(guide).toContain('Do not flatten');
+  });
 });
