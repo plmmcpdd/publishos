@@ -5,6 +5,8 @@ import type { Client, ContentItem, SocialBinding } from '../api';
 const emptyContent = {
   title: '',
   description: '',
+  caption: '',
+  hashtags: '',
   videoUrl: '',
   thumbnailUrl: '',
   platform: 'tiktok',
@@ -82,7 +84,8 @@ export default function ContentList() {
 
     if (newContent.platform === 'tiktok' && !newContent.targetAccountBindingId) { setError('请选择目标 TikTok 账号'); return; }
     if (newContent.platform === 'tiktok' && !bindings.some((binding) => binding.id === newContent.targetAccountBindingId && bindingCanTargetTikTok(binding))) { setError('请选择有效的 TikTok 目标账号'); return; }
-    try { setActionId('create'); await createContent(newContent); setShowCreate(false); setNewContent(emptyContent); setBindings([]); await loadContents(); }
+    const hashtags = newContent.hashtags.split(/[\s,]+/u).map((tag) => tag.trim()).filter(Boolean);
+    try { setActionId('create'); await createContent({ ...newContent, hashtags }); setShowCreate(false); setNewContent(emptyContent); setBindings([]); await loadContents(); }
     catch (err) { setError(err instanceof Error ? err.message : '创建失败'); } finally { setActionId(null); }
   };
 
@@ -146,6 +149,19 @@ export default function ContentList() {
               onChange={(event) => setNewContent({ ...newContent, description: event.target.value })}
               className="border rounded px-3 py-2 col-span-2"
               rows={3}
+            />
+            <textarea
+              placeholder="TikTok 文案（不会自动包含内部标题）"
+              value={newContent.caption}
+              onChange={(event) => setNewContent({ ...newContent, caption: event.target.value })}
+              className="border rounded px-3 py-2 col-span-2"
+              rows={3}
+            />
+            <input
+              placeholder="Hashtags（空格或逗号分隔）"
+              value={newContent.hashtags}
+              onChange={(event) => setNewContent({ ...newContent, hashtags: event.target.value })}
+              className="border rounded px-3 py-2 col-span-2"
             />
             <div className="col-span-2">
               <label className="block text-sm font-medium text-gray-700 mb-1">视频</label>

@@ -49,6 +49,8 @@ describe('ContentList account-targeted interactions', () => {
     const user = userEvent.setup(); render(<ContentList />); await waitFor(() => expect(api.fetchContents).toHaveBeenCalled());
     await user.click(screen.getByText('+ 创建内容'));
     await user.type(screen.getByPlaceholderText('标题'), 'New title'); await user.type(screen.getByPlaceholderText('描述'), 'New description');
+    await user.type(screen.getByPlaceholderText('TikTok 文案（不会自动包含内部标题）'), 'Public caption');
+    await user.type(screen.getByPlaceholderText('Hashtags（空格或逗号分隔）'), '#one, 中文 #one');
     await user.selectOptions(screen.getByDisplayValue('选择客户'), 'client-a');
     await waitFor(() => expect(api.fetchTikTokBindings).toHaveBeenCalledWith('client-a'));
     const target = screen.getByDisplayValue('选择目标 TikTok 账号') as HTMLSelectElement;
@@ -56,7 +58,9 @@ describe('ContentList account-targeted interactions', () => {
     expect((target.querySelector('option[value="scope"]') as HTMLOptionElement).disabled).toBe(true);
     await user.selectOptions(target, 'binding-a');
     await user.click(screen.getByText('创建草稿'));
-    await waitFor(() => expect(api.createContent).toHaveBeenCalledWith(expect.objectContaining({ clientId: 'client-a', targetAccountBindingId: 'binding-a' })));
+    await waitFor(() => expect(api.createContent).toHaveBeenCalledWith(expect.objectContaining({
+      clientId: 'client-a', targetAccountBindingId: 'binding-a', caption: 'Public caption', hashtags: ['#one', '中文', '#one'],
+    })));
   });
 
   it('clears TikTok targeting when switching platform and requires reselection on return', async () => {

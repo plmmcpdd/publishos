@@ -30,6 +30,7 @@ describe('Settings multi-account interaction', () => {
   it('renders independent bindings, disconnects only its target, and still adds an account', async () => {
     const user = userEvent.setup(); render(<SettingsScreen />); await screen.findByText('one · Connected');
     expect(screen.getByText('two · Reconnect required')).toBeTruthy();
+    expect(screen.getByText(/TikTok uses the account currently signed in to your browser/)).toBeTruthy();
     await user.click(screen.getAllByText('Disconnect')[0]);
     await waitFor(() => expect(api.disconnectTikTokBinding).toHaveBeenCalledWith('one'));
     expect(screen.getByText('two · Reconnect required')).toBeTruthy();

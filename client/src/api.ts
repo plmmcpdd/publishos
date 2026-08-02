@@ -67,6 +67,8 @@ export interface ContentItem {
   // Phase 1D delivery fields
   finalCaption?: string;
   hashtags?: string[];
+  tiktokCaptionText?: string;
+  tiktokCaptionHasContent?: boolean;
   aiDisclosure?: AiDisclosure;
   deliveryState?: DeliveryState;
   deliveryMessage?: string;
@@ -127,6 +129,8 @@ interface ApiContent {
   // Phase 1D fields
   finalCaption?: string;
   hashtags?: string[];
+  tiktokCaptionText?: string;
+  tiktokCaptionHasContent?: boolean;
   aiDisclosure?: AiDisclosure;
   deliveryState?: DeliveryState;
   deliveryMessage?: string;
@@ -165,6 +169,8 @@ function mapContent(item: ApiContent): ContentItem {
     publishJobStatus: item.publishJobStatus || null,
     finalCaption: item.finalCaption,
     hashtags: item.hashtags,
+    tiktokCaptionText: item.tiktokCaptionText,
+    tiktokCaptionHasContent: item.tiktokCaptionHasContent,
     aiDisclosure: item.aiDisclosure,
     deliveryState: item.deliveryState,
     deliveryMessage: item.deliveryMessage,

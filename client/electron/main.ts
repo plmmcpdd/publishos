@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage } from 'electron';
+import { app, BrowserWindow, clipboard, ipcMain, Tray, Menu, nativeImage } from 'electron';
 import path from 'path';
 
 const isDev = process.env.NODE_ENV === 'development';
@@ -70,6 +70,13 @@ ipcMain.handle('app:get-version', () => {
 ipcMain.handle('tiktok:open-auth', async (_event, authUrl: string) => {
   const { shell } = await import('electron');
   shell.openExternal(authUrl);
+});
+
+ipcMain.handle('clipboard:copy-text', (_event, text: unknown) => {
+  if (typeof text !== 'string' || text.length > 20_000) {
+    throw new Error('Clipboard text is invalid or too long');
+  }
+  clipboard.writeText(text);
 });
 
 ipcMain.on('window:minimize', () => {

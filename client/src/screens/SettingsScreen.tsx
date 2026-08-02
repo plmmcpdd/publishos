@@ -160,7 +160,10 @@ export default function SettingsScreen() {
             </div>
           </div>
         ))}
-        <div style={{ margin: '0 16px 14px' }}><button className="btn btn-primary" onClick={() => void handleConnectTikTok()} disabled={bindingLoading}>{bindingLoading ? 'Connecting...' : 'Add TikTok Account'}</button></div>
+        <div style={{ margin: '0 16px 14px' }}>
+          <button className="btn btn-primary" onClick={() => void handleConnectTikTok()} disabled={bindingLoading}>{bindingLoading ? 'Connecting...' : 'Add TikTok Account'}</button>
+          <p style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 8 }}>TikTok uses the account currently signed in to your browser. To add another account, switch accounts in the browser before continuing.</p>
+        </div>
         </>
       )}
 

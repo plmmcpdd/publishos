@@ -7,6 +7,7 @@ interface ElectronAPI {
   onQueueUpdate: (callback: (count: number) => void) => void;
   removeQueueListener: () => void;
   openTikTokAuth: (authUrl: string) => Promise<void>;
+  copyText: (text: string) => Promise<void>;
 }
 
 interface Window {

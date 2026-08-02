@@ -90,6 +90,7 @@ export default function QueueScreen() {
   const [failedMedia, setFailedMedia] = useState<Record<string, true>>({});
   const [sendingId, setSendingId] = useState<string | null>(null);
   const [aiConfirmations, setAiConfirmations] = useState<Record<string, boolean>>({});
+  const [captionStatus, setCaptionStatus] = useState<Record<string, string>>({});
 
   const loadContents = useCallback(async () => {
     setLoading(true);
@@ -159,6 +160,25 @@ export default function QueueScreen() {
     }
   };
 
+  const handleCopyCaption = async (content: ContentItem) => {
+    if (!content.tiktokCaptionText) return;
+    setCaptionStatus((previous) => ({ ...previous, [content.id]: '' }));
+    try {
+      if (window.electronAPI?.copyText) {
+        await window.electronAPI.copyText(content.tiktokCaptionText);
+      } else if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(content.tiktokCaptionText);
+      } else {
+        throw new Error('Clipboard is unavailable');
+      }
+      setCaptionStatus((previous) => ({ ...previous, [content.id]: 'Caption copied' }));
+      window.setTimeout(() => setCaptionStatus((previous) => previous[content.id] === 'Caption copied'
+        ? { ...previous, [content.id]: '' } : previous), 2_000);
+    } catch (err) {
+      setCaptionStatus((previous) => ({ ...previous, [content.id]: `Could not copy caption: ${err instanceof Error ? err.message : 'Clipboard error'}` }));
+    }
+  };
+
   return (
     <ErrorBoundary>
     <div className="content-area">
@@ -194,6 +214,7 @@ export default function QueueScreen() {
             const isSending = sendingId === content.id;
             const canRetry = content.canRetry && state === 'failed';
             const targetAvailable = targetCanSend(content.targetAccountBinding);
+            const hasCaption = Boolean(content.tiktokCaptionHasContent && content.tiktokCaptionText);
 
             return (
               <div key={content.id} className="card">
@@ -212,6 +233,7 @@ export default function QueueScreen() {
                     )}
                   </div>
                   <div className="card-meta">
+                    <div className="card-schedule">Content Title</div>
                     <div className="card-title">{content.title}</div>
                     {content.description && <div className="card-schedule">{content.description}</div>}
                     <div className="tag-row">
@@ -223,20 +245,25 @@ export default function QueueScreen() {
                   </div>
                 </div>
 
-                {/* Final Caption */}
-                {content.finalCaption && (
+                <div style={{ margin: '10px 0', padding: '8px 12px', background: '#f9fafb', borderRadius: 8, fontSize: 13 }}>
+                  <div style={{ fontWeight: 600, marginBottom: 4, color: '#374151' }}>TikTok Caption</div>
+                  {content.caption?.trim()
+                    ? <div style={{ whiteSpace: 'pre-wrap', color: '#4b5563' }}>{content.caption.trim()}</div>
+                    : <div style={{ color: '#6b7280' }}>No caption provided</div>}
+                </div>
+
+                {content.hashtags && content.hashtags.length > 0 && (
                   <div style={{ margin: '10px 0', padding: '8px 12px', background: '#f9fafb', borderRadius: 8, fontSize: 13 }}>
-                    <div style={{ fontWeight: 600, marginBottom: 4, color: '#374151' }}>Caption</div>
-                    <div style={{ whiteSpace: 'pre-wrap', color: '#4b5563' }}>{content.finalCaption}</div>
+                    <div style={{ fontWeight: 600, marginBottom: 4, color: '#374151' }}>Hashtags</div>
+                    <div style={{ color: '#4b5563' }}>{content.hashtags.join(' ')}</div>
                   </div>
                 )}
-
-                {/* Hashtags */}
-                {content.hashtags && content.hashtags.length > 0 && (
-                  <div style={{ margin: '6px 0', display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                    {content.hashtags.map((tag) => (
-                      <span key={tag} style={{ background: '#e0e7ff', color: '#3730a3', padding: '2px 8px', borderRadius: 12, fontSize: 12 }}>{tag}</span>
-                    ))}
+                <div style={{ margin: '8px 0', fontSize: 13, color: '#4b5563' }}>
+                  Video will be sent to TikTok Inbox. Copy the caption and paste it in TikTok.
+                </div>
+                {captionStatus[content.id] && (
+                  <div role="status" style={{ margin: '8px 0', fontSize: 13, color: captionStatus[content.id] === 'Caption copied' ? '#047857' : '#b91c1c' }}>
+                    {captionStatus[content.id]}
                   </div>
                 )}
 
@@ -309,6 +336,14 @@ export default function QueueScreen() {
 
                 {/* Action buttons */}
                 <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>
+                  <button
+                    className="btn btn-secondary"
+                    style={{ flex: 1 }}
+                    disabled={!hasCaption}
+                    onClick={() => void handleCopyCaption(content)}
+                  >
+                    Copy Caption
+                  </button>
                   {isActionable(state) && (
                     <button
                       className="btn btn-primary"
@@ -349,6 +384,12 @@ export default function QueueScreen() {
                     >
                       Open TikTok
                     </button>
+                  )}
+                  {state === 'waiting_for_final_tiktok_publish' && (
+                    <div style={{ marginTop: 4, fontSize: 13, color: '#1e40af' }}>
+                      <strong>Video sent to TikTok Inbox.</strong><br />
+                      Next:<br />1. Open TikTok Inbox.<br />2. Open the uploaded video.<br />3. Paste the copied caption.<br />4. Review and publish.
+                    </div>
                   )}
                 </div>
               </div>

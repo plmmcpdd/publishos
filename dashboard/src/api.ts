@@ -17,6 +17,8 @@ export interface ContentItem {
   id: string;
   title: string;
   description?: string;
+  caption?: string | null;
+  hashtags?: string[];
   platform?: string;
   platforms?: string;
   status: string;
@@ -188,6 +190,8 @@ export async function deleteContent(id: string): Promise<void> {
 export async function createContent(input: {
   title: string;
   description: string;
+  caption?: string;
+  hashtags?: string[];
   videoUrl: string;
   thumbnailUrl?: string;
   platform: string;
