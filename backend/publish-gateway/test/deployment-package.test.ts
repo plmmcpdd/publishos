@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 
 const root = path.resolve(import.meta.dirname, '..');
@@ -33,5 +34,8 @@ describe('staging deployment package', () => {
     const guide = read('deploy/STAGING-DEPLOYMENT.md');
     expect(guide).toContain('backend/publish-gateway');
     expect(guide).toContain('Do not flatten');
+  });
+  it('verifies the SQLite native runtime dependency used by release candidates', () => {
+    execFileSync(process.execPath, ['deploy/verify-runtime-dependencies.cjs'], { cwd: root, stdio: 'pipe' });
   });
 });
