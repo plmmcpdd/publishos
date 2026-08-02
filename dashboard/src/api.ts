@@ -30,6 +30,7 @@ export interface ContentItem {
   thumbnail_url?: string;
   thumbnailUrl?: string;
   videoUrl?: string;
+  targetAccountBinding?: Pick<SocialBinding, 'id' | 'accountUsername' | 'username' | 'status' | 'active' | 'reauthorizationRequired'> | null;
 }
 
 export interface Client {
@@ -191,6 +192,7 @@ export async function createContent(input: {
   thumbnailUrl?: string;
   platform: string;
   clientId: string;
+  targetAccountBindingId?: string;
 }): Promise<ContentItem> {
   const data = await request<{ success: boolean; data: ContentItem }>('/content', {
     method: 'POST',

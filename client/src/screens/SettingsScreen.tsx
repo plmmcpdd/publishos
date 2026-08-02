@@ -133,7 +133,8 @@ export default function SettingsScreen() {
           </button>
         </div>
       ) : (
-        tiktokBindings.map((binding) => (
+        <>
+        {tiktokBindings.map((binding) => (
           <div key={binding.id} className="card" style={{ margin: '0 16px 14px' }}>
             <div className="setting-row">
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -158,7 +159,9 @@ export default function SettingsScreen() {
               </div>
             </div>
           </div>
-        ))
+        ))}
+        <div style={{ margin: '0 16px 14px' }}><button className="btn btn-primary" onClick={() => void handleConnectTikTok()} disabled={bindingLoading}>{bindingLoading ? 'Connecting...' : 'Add TikTok Account'}</button></div>
+        </>
       )}
 
       <div className="section-label" style={{ marginTop: 8 }}>{t('settings.preferences')}</div>

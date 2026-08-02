@@ -101,6 +101,8 @@ export default function QueueScreen() {
   useEffect(() => { void loadContents(); }, [loadContents]);
 
   const handleSendToTikTok = async (content: ContentItem) => {
+    if (!content.targetAccountBinding) { setError('This content has no target TikTok account. Ask your operator to assign one.'); return; }
+    if (!content.targetAccountBinding.active || content.targetAccountBinding.status !== 'active' || content.targetAccountBinding.reauthorizationRequired) { setError('The target TikTok account requires reconnection before sending.'); return; }
     const needsAiAck = Boolean(content.aiDisclosure?.required);
     if (needsAiAck && !aiConfirmations[content.id]) {
       setError('Please confirm the AI-generated content disclosure before sending.');
@@ -113,6 +115,7 @@ export default function QueueScreen() {
       const result = await sendToTikTok(content.id, {
         contentConfirmed: true,
         aiDisclosureAcknowledged: needsAiAck ? true : undefined,
+        accountBindingId: content.targetAccountBinding.id,
       });
       // Refresh the item from backend instead of removing it
       const refreshed = await fetchContentDetail(content.id);
@@ -185,6 +188,7 @@ export default function QueueScreen() {
             const needsAiAck = Boolean(content.aiDisclosure?.required);
             const isSending = sendingId === content.id;
             const canRetry = content.canRetry && state === 'failed';
+            const targetAvailable = Boolean(content.targetAccountBinding && content.targetAccountBinding.active && content.targetAccountBinding.status === 'active' && !content.targetAccountBinding.reauthorizationRequired);
 
             return (
               <div key={content.id} className="card">
@@ -210,6 +214,7 @@ export default function QueueScreen() {
                       <span className="tag">{formatDate(content.createdAt || content.updatedAt)}</span>
                       <DeliveryStateBadge state={state} />
                     </div>
+                    <div className="card-schedule">Target TikTok Account: {content.targetAccountBinding ? `@${content.targetAccountBinding.username || content.targetAccountBinding.accountUsername || 'TikTok'}` : 'Not assigned'}</div>
                   </div>
                 </div>
 
@@ -303,10 +308,10 @@ export default function QueueScreen() {
                     <button
                       className="btn btn-primary"
                       style={{ flex: 1 }}
-                      disabled={isSending}
+                      disabled={isSending || !targetAvailable}
                       onClick={() => void handleSendToTikTok(content)}
                     >
-                      {isSending ? 'Sending...' : 'Send to TikTok'}
+                      {isSending ? 'Sending...' : !content.targetAccountBinding ? 'Target account required' : !targetAvailable ? 'Target account reconnect required' : 'Send to TikTok'}
                     </button>
                   )}
                   {isActiveDelivery(state) && (

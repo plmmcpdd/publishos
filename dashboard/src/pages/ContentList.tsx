@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { createContent, deleteContent, deliverContent, fetchClients, fetchContents, firstPlatform, uploadVideo } from '../api';
-import type { Client, ContentItem } from '../api';
+import { approveContent, createContent, deleteContent, deliverContent, fetchClients, fetchContents, fetchTikTokBindings, firstPlatform, uploadVideo } from '../api';
+import type { Client, ContentItem, SocialBinding } from '../api';
 
 const emptyContent = {
   title: '',
@@ -9,6 +9,7 @@ const emptyContent = {
   thumbnailUrl: '',
   platform: 'tiktok',
   clientId: '',
+  targetAccountBindingId: '',
 };
 
 const statusClass: Record<string, string> = {
@@ -44,6 +45,8 @@ export default function ContentList() {
   const [filter, setFilter] = useState('all');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [bindings, setBindings] = useState<SocialBinding[]>([]);
+  const [actionId, setActionId] = useState<string | null>(null);
 
   const loadContents = async () => {
     setLoading(true);
@@ -72,16 +75,16 @@ export default function ContentList() {
       return;
     }
 
-    await createContent(newContent);
-    setShowCreate(false);
-    setNewContent(emptyContent);
-    await loadContents();
+    if (newContent.platform === 'tiktok' && !newContent.targetAccountBindingId) { setError('请选择目标 TikTok 账号'); return; }
+    try { setActionId('create'); await createContent(newContent); setShowCreate(false); setNewContent(emptyContent); setBindings([]); await loadContents(); }
+    catch (err) { setError(err instanceof Error ? err.message : '创建失败'); } finally { setActionId(null); }
   };
 
   const handleDeliver = async (id: string) => {
-    await deliverContent(id);
-    await loadContents();
+    try { setActionId(id); setError(''); await deliverContent(id); await loadContents(); } catch (err) { setError(err instanceof Error ? err.message : '推送失败'); } finally { setActionId(null); }
   };
+  const handleApprove = async (id: string) => { try { setActionId(id); setError(''); await approveContent(id); await loadContents(); } catch (err) { setError(err instanceof Error ? err.message : '审核失败'); } finally { setActionId(null); } };
+  const changeClient = async (clientId: string) => { setNewContent((value) => ({ ...value, clientId, targetAccountBindingId: '' })); setBindings([]); if (clientId && newContent.platform === 'tiktok') { try { setBindings(await fetchTikTokBindings(clientId)); } catch (err) { setError(err instanceof Error ? err.message : '无法加载 TikTok 账号'); } } };
 
   const handleDelete = async (id: string) => {
     if (!confirm('确定删除该内容？')) return;
@@ -124,7 +127,7 @@ export default function ContentList() {
             />
             <select
               value={newContent.platform}
-              onChange={(event) => setNewContent({ ...newContent, platform: event.target.value })}
+              onChange={(event) => { const platform = event.target.value; setNewContent({ ...newContent, platform, targetAccountBindingId: '' }); if (platform === 'tiktok' && newContent.clientId) void fetchTikTokBindings(newContent.clientId).then(setBindings).catch(() => setBindings([])); }}
               className="border rounded px-3 py-2"
             >
               <option value="tiktok">TikTok</option>
@@ -167,7 +170,7 @@ export default function ContentList() {
             />
             <select
               value={newContent.clientId}
-              onChange={(event) => setNewContent({ ...newContent, clientId: event.target.value })}
+              onChange={(event) => void changeClient(event.target.value)}
               className="border rounded px-3 py-2 col-span-2"
             >
               <option value="">选择客户</option>
@@ -175,10 +178,17 @@ export default function ContentList() {
                 <option key={client.id} value={client.id}>{client.name}</option>
               ))}
             </select>
+            {newContent.platform === 'tiktok' && newContent.clientId && (
+              <select value={newContent.targetAccountBindingId} onChange={(event) => setNewContent({ ...newContent, targetAccountBindingId: event.target.value })} className="border rounded px-3 py-2 col-span-2" required>
+                <option value="">选择目标 TikTok 账号</option>
+                {bindings.map((binding) => <option key={binding.id} value={binding.id} disabled={!binding.active || binding.status !== 'active' || binding.reauthorizationRequired}>{`@${binding.username || binding.accountUsername || 'TikTok'} · ${binding.reauthorizationRequired ? 'Reconnect required' : 'Connected'}`}</option>)}
+              </select>
+            )}
+            {newContent.platform === 'tiktok' && newContent.clientId && bindings.length === 0 && <p className="text-sm text-red-600 col-span-2">该客户没有有效 TikTok 账号，请先在客户端连接账号。</p>}
           </div>
           <div className="flex gap-3 mt-4">
-            <button onClick={() => void handleCreate()} className="px-4 py-2 bg-green-600 hover:bg-green-500 text-white rounded-lg">
-              创建草稿
+            <button disabled={actionId === 'create'} onClick={() => void handleCreate()} className="px-4 py-2 bg-green-600 hover:bg-green-500 text-white rounded-lg disabled:opacity-50">
+              {actionId === 'create' ? '创建中...' : '创建草稿'}
             </button>
             <button onClick={() => setShowCreate(false)} className="px-4 py-2 bg-gray-300 hover:bg-gray-400 rounded-lg">
               取消
@@ -227,14 +237,17 @@ export default function ContentList() {
                   </div>
                   {content.description && <p className="text-gray-500 text-sm mt-1">{content.description}</p>}
                   {content.client && <p className="text-gray-500 text-sm mt-1">客户：{content.client.name}</p>}
+                  <p className="text-gray-500 text-sm mt-1">目标账号：{content.targetAccountBinding ? `@${content.targetAccountBinding.username || content.targetAccountBinding.accountUsername}` : '未指定'}</p>
                   <p className="text-gray-400 text-xs mt-1">创建时间：{formatDate(content.createdAt)}</p>
                 </div>
                 <div className="flex gap-2">
                   {content.status === 'draft' && (
-                    <button onClick={() => void handleDeliver(content.id)} className="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded text-sm">
-                      推送
+                    <button disabled={actionId === content.id} onClick={() => void handleApprove(content.id)} className="px-3 py-1 bg-amber-600 hover:bg-amber-500 text-white rounded text-sm disabled:opacity-50">
+                      {actionId === content.id ? '处理中...' : '提交审核'}
                     </button>
                   )}
+                  {content.status === 'pending_review' && <button disabled={actionId === content.id} onClick={() => void handleApprove(content.id)} className="px-3 py-1 bg-amber-600 text-white rounded text-sm disabled:opacity-50">批准</button>}
+                  {content.status === 'approved' && <button disabled={actionId === content.id} onClick={() => void handleDeliver(content.id)} className="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded text-sm disabled:opacity-50">{actionId === content.id ? '推送中...' : '推送给客户'}</button>}
                   <button onClick={() => void handleDelete(content.id)} className="px-3 py-1 bg-red-600 hover:bg-red-500 text-white rounded text-sm">
                     删除
                   </button>

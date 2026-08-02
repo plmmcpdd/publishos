@@ -72,6 +72,7 @@ export interface ContentItem {
   deliveryMessage?: string;
   canRetry?: boolean;
   latestPublishJob?: PublishJobSummary | null;
+  targetAccountBinding?: TikTokBinding | null;
 }
 
 export interface PublishJobSummary {
@@ -131,6 +132,7 @@ interface ApiContent {
   deliveryMessage?: string;
   canRetry?: boolean;
   latestPublishJob?: PublishJobSummary | null;
+  targetAccountBinding?: TikTokBinding | null;
 }
 
 function firstPlatform(value?: string) {
@@ -168,6 +170,7 @@ function mapContent(item: ApiContent): ContentItem {
     deliveryMessage: item.deliveryMessage,
     canRetry: item.canRetry,
     latestPublishJob: item.latestPublishJob,
+    targetAccountBinding: item.targetAccountBinding || null,
   };
 }
 
@@ -262,7 +265,7 @@ export async function fetchContentDetail(id: string): Promise<ContentItem> {
 
 export async function sendToTikTok(
   id: string,
-  opts: { contentConfirmed: boolean; aiDisclosureAcknowledged?: boolean },
+  opts: { contentConfirmed: boolean; aiDisclosureAcknowledged?: boolean; accountBindingId?: string },
 ): Promise<SendToTikTokResult> {
   const data = await request<{
     success: boolean;
@@ -274,6 +277,7 @@ export async function sendToTikTok(
       deviceId: requireDeviceId(),
       contentConfirmed: opts.contentConfirmed,
       aiDisclosureAcknowledged: opts.aiDisclosureAcknowledged,
+      accountBindingId: opts.accountBindingId,
     }),
   });
   return {

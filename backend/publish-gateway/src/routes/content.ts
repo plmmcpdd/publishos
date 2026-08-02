@@ -18,6 +18,9 @@ const safeAccountBinding = {
   id: true, clientId: true, platform: true, accountUsername: true, platformUserId: true,
   username: true, status: true, active: true, expiresAt: true, createdAt: true, updatedAt: true,
 } as const;
+const safeTargetAccountBinding = {
+  id: true, accountUsername: true, username: true, status: true, active: true, reauthorizationRequired: true,
+} as const;
 const safePublishJob = {
   id: true, contentId: true, accountBindingId: true, platform: true, status: true, scheduleAt: true,
   publishId: true, platformPostId: true, platformPostUrl: true, publishedAt: true, failedAt: true,
@@ -31,6 +34,8 @@ const safePublishJob = {
 const createContentSchema = z.object({
   clientId: z.string().optional(),
   client_id: z.string().optional(),
+  targetAccountBindingId: z.string().optional(),
+  target_account_binding_id: z.string().optional(),
   title: z.string().min(1).max(200),
   description: z.string().min(1),
   caption: z.string().optional(),
@@ -88,6 +93,22 @@ function sanitizeContent(content: any) {
   };
 }
 
+function scopes(binding: { grantedScopes?: string | null; scope?: string | null }) {
+  try { const parsed = JSON.parse(binding.grantedScopes || '[]'); if (Array.isArray(parsed)) return parsed.filter((v): v is string => typeof v === 'string'); } catch { /* legacy scope below */ }
+  return (binding.scope || '').split(/[,\s]+/u).filter(Boolean);
+}
+
+async function requireTargetTikTokBinding(clientId: string, bindingId: string | null | undefined, mismatchCode = 'target_tiktok_account_mismatch') {
+  if (!bindingId) throw new AppError(422, 'target_tiktok_account_required', 'A target TikTok account is required');
+  const binding = await prisma.accountBinding.findUnique({ where: { id: bindingId } });
+  if (!binding) throw new AppError(404, 'target_tiktok_account_not_found', 'Target TikTok account was not found');
+  if (binding.clientId !== clientId || binding.platform !== 'tiktok') throw new AppError(409, mismatchCode, 'Target TikTok account does not belong to this customer');
+  if (!binding.active || binding.status !== 'active' || !binding.accessToken) throw new AppError(409, 'target_tiktok_account_inactive', 'Target TikTok account is inactive');
+  if (binding.reauthorizationRequired) throw new AppError(409, 'target_tiktok_reauthorization_required', 'Target TikTok account requires reconnection');
+  if (!scopes(binding).includes('video.upload')) throw new AppError(409, 'target_tiktok_scope_missing', 'Target TikTok account does not grant video.upload');
+  return binding;
+}
+
 function serializeContent(content: any, audience = 'content') {
   if (!content) return content;
   const latestJob = content.publishJobs?.[0];
@@ -110,6 +131,14 @@ function serializeContent(content: any, audience = 'content') {
     : null;
   return sanitizeContent({
     ...content,
+    targetAccountBinding: content.targetAccountBinding ? {
+      id: content.targetAccountBinding.id,
+      accountUsername: content.targetAccountBinding.accountUsername,
+      username: content.targetAccountBinding.username,
+      status: content.targetAccountBinding.status,
+      active: content.targetAccountBinding.active,
+      reauthorizationRequired: content.targetAccountBinding.reauthorizationRequired,
+    } : null,
     platform: firstPlatform(content.platforms),
     videoUrl: video,
     thumbnailUrl: thumbnail,
@@ -200,6 +229,9 @@ router.post('/', authenticateToken, requireAdmin, async (req, res) => {
   }
 
   const platformList = data.platforms?.length ? data.platforms : [data.platform || 'tiktok'];
+  const isTikTok = platformList.includes('tiktok');
+  const targetAccountBindingId = data.targetAccountBindingId || data.target_account_binding_id;
+  if (isTikTok) await requireTargetTikTokBinding(clientId, targetAccountBindingId);
   const videoUrl = data.videoUrl || data.video_url || (process.env.NODE_ENV === 'test' ? 'mock/video.mp4' : '');
   if (!videoUrl) {
     res.status(422).json({ success: false, error: 'A private uploaded video is required' });
@@ -212,6 +244,7 @@ router.post('/', authenticateToken, requireAdmin, async (req, res) => {
   const content = await prisma.content.create({
     data: {
       clientId,
+      targetAccountBindingId: isTikTok ? targetAccountBindingId : null,
       contentRef,
       title: data.title,
       description: data.description,
@@ -238,7 +271,7 @@ router.post('/', authenticateToken, requireAdmin, async (req, res) => {
         })),
       },
     },
-    include: { assets: true, client: { select: safeClient } },
+    include: { assets: true, client: { select: safeClient }, targetAccountBinding: { select: safeTargetAccountBinding } },
   });
 
   await writeAudit({
@@ -246,7 +279,7 @@ router.post('/', authenticateToken, requireAdmin, async (req, res) => {
     actorType: 'dashboard',
     targetType: 'content',
     targetId: content.id,
-    details: JSON.stringify({ title: data.title, clientId }),
+    details: JSON.stringify({ title: data.title, clientId, targetAccountBindingId: isTikTok ? targetAccountBindingId : null }),
   });
 
   res.status(201).json({ success: true, data: serializeContent(content, 'admin') });
@@ -298,7 +331,7 @@ router.get('/', authenticateToken, async (req, res) => {
           : {}),
       ...(scopedClientId ? { clientId: scopedClientId } : {}),
     },
-    include: { assets: true, client: { select: safeClient }, publishJobs: { select: safePublishJob, orderBy: { createdAt: 'desc' } } },
+    include: { assets: true, client: { select: safeClient }, targetAccountBinding: { select: safeTargetAccountBinding }, publishJobs: { select: safePublishJob, orderBy: { createdAt: 'desc' } } },
     orderBy: { createdAt: 'desc' },
     take: 100,
   });
@@ -325,7 +358,7 @@ router.get('/delivered', authenticateToken, async (req, res) => {
         ...(scopedClientId ? { clientId: scopedClientId } : {}),
       },
       include: {
-        client: { select: safeClient },
+        client: { select: safeClient }, targetAccountBinding: { select: safeTargetAccountBinding },
         publishJobs: { select: safePublishJob, orderBy: { createdAt: 'desc' } },
       },
       orderBy: { createdAt: 'desc' },
@@ -400,7 +433,7 @@ router.get('/:id', authenticateToken, async (req, res) => {
     where: where as any,
     include: {
       assets: true,
-      client: { select: safeClient },
+      client: { select: safeClient }, targetAccountBinding: { select: safeTargetAccountBinding },
       publishJobs: { select: safePublishJob, orderBy: { createdAt: 'desc' } },
     },
   });
@@ -419,11 +452,14 @@ router.get('/:id', authenticateToken, async (req, res) => {
 router.post('/:id/deliver', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const id = String(req.params.id);
-    await prisma.$transaction((tx) => transitionContent(tx, id, ['approved', 'failed'], 'delivered'));
+    const before = await prisma.content.findUnique({ where: { id } });
+    if (!before) throw new AppError(404, 'not_found', 'Content not found');
+    if (firstPlatform(before.platforms) === 'tiktok') await requireTargetTikTokBinding(before.clientId, before.targetAccountBindingId);
+    await prisma.$transaction((tx) => transitionContent(tx, id, 'approved', 'delivered'));
     const content = await prisma.content.findUnique({
       where: { id },
       include: {
-        client: { select: safeClient },
+        client: { select: safeClient }, targetAccountBinding: { select: safeTargetAccountBinding },
         publishJobs: { select: safePublishJob, orderBy: { createdAt: 'desc' } },
       },
     });
@@ -473,32 +509,10 @@ async function sendToTikTok(req: Request, res: Response): Promise<void> {
       );
     }
 
-    const binding = await prisma.accountBinding.findFirst({
-      where: {
-        ...(accountBindingId ? { id: accountBindingId } : {}),
-        clientId: scopedClientId,
-        platform: 'tiktok',
-        active: true,
-        status: 'active',
-        accessToken: { not: null },
-      },
-      orderBy: { updatedAt: 'desc' },
-    });
-
-    if (!binding) {
-      throw new AppError(
-        409,
-        'tiktok_connection_required',
-        'No active TikTok account is connected. Reconnect TikTok before sending.',
-      );
+    if (accountBindingId && accountBindingId !== existing.targetAccountBindingId) {
+      throw new AppError(409, 'target_account_mismatch', 'Requested TikTok account does not match the content target');
     }
-    if (binding.scope && !binding.scope.split(/[,\s]+/u).includes('video.upload')) {
-      throw new AppError(
-        409,
-        'tiktok_scope_missing',
-        'TikTok connection does not grant video.upload. Reconnect TikTok before sending.',
-      );
-    }
+    const binding = await requireTargetTikTokBinding(scopedClientId, existing.targetAccountBindingId);
 
     const requestedAt = new Date();
     const captionHash = crypto.createHash('sha256').update(contract.finalCaption).digest('hex');
@@ -546,7 +560,8 @@ async function sendToTikTok(req: Request, res: Response): Promise<void> {
           deviceId,
           details: JSON.stringify({
             contentId: existing.id,
-            bindingId: binding.id,
+            targetAccountBindingId: binding.id,
+            targetAccountUsername: binding.accountUsername,
             captionHash,
             hashtagCount: contract.hashtags.length,
             aiDisclosureRequired: contract.aiDisclosureRequired,
