@@ -1,4 +1,5 @@
 import { useEffect, useState, Component, ReactNode, useCallback } from 'react';
+import QRCode from 'qrcode';
 import {
   api,
   sendToTikTok,
@@ -6,9 +7,17 @@ import {
   retryTikTok,
   fetchDeliveredContents,
   fetchContentDetail,
+  createMobileCaptionHandoff,
+  revokeMobileCaptionHandoff,
   ContentItem,
   DeliveryState,
+  MobileCaptionHandoff,
 } from '../api';
+
+type PhoneHandoffState = MobileCaptionHandoff & {
+  qrDataUrl: string;
+  revoked: boolean;
+};
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: string | null }> {
   state = { error: null as string | null };
@@ -83,6 +92,13 @@ function targetCanSend(target: ContentItem['targetAccountBinding']): boolean {
     && target.grantedScopes?.includes('video.upload'));
 }
 
+function remainingTime(expiresAt: string, now: number): string {
+  const milliseconds = Math.max(0, Date.parse(expiresAt) - now);
+  const minutes = Math.floor(milliseconds / 60_000);
+  const seconds = Math.floor((milliseconds % 60_000) / 1000);
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
+}
+
 export default function QueueScreen() {
   const [contents, setContents] = useState<ContentItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -91,6 +107,11 @@ export default function QueueScreen() {
   const [sendingId, setSendingId] = useState<string | null>(null);
   const [aiConfirmations, setAiConfirmations] = useState<Record<string, boolean>>({});
   const [captionStatus, setCaptionStatus] = useState<Record<string, string>>({});
+  const [phoneHandoffs, setPhoneHandoffs] = useState<Record<string, PhoneHandoffState>>({});
+  const [phoneErrors, setPhoneErrors] = useState<Record<string, string>>({});
+  const [phoneLoadingId, setPhoneLoadingId] = useState<string | null>(null);
+  const [openPhoneContentId, setOpenPhoneContentId] = useState<string | null>(null);
+  const [clock, setClock] = useState(() => Date.now());
 
   const loadContents = useCallback(async () => {
     setLoading(true);
@@ -105,6 +126,12 @@ export default function QueueScreen() {
   }, []);
 
   useEffect(() => { void loadContents(); }, [loadContents]);
+
+  useEffect(() => {
+    if (Object.keys(phoneHandoffs).length === 0) return undefined;
+    const timer = window.setInterval(() => setClock(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, [phoneHandoffs]);
 
   const handleSendToTikTok = async (content: ContentItem) => {
     if (!content.targetAccountBinding) { setError('This content has no target TikTok account. Ask your operator to assign one.'); return; }
@@ -179,6 +206,45 @@ export default function QueueScreen() {
     }
   };
 
+  const createPhoneHandoff = async (content: ContentItem) => {
+    if (!content.tiktokCaptionText) return;
+    setPhoneLoadingId(content.id);
+    setPhoneErrors((previous) => ({ ...previous, [content.id]: '' }));
+    try {
+      const created = await createMobileCaptionHandoff(content.id);
+      const parsed = new URL(created.url);
+      if (parsed.protocol !== 'https:' || !parsed.hash || parsed.search) throw new Error('Backend returned an invalid phone handoff URL');
+      const qrDataUrl = await QRCode.toDataURL(created.url, { errorCorrectionLevel: 'M', margin: 2, width: 320 });
+      setPhoneHandoffs((previous) => ({ ...previous, [content.id]: { ...created, qrDataUrl, revoked: false } }));
+      setClock(Date.now());
+      setOpenPhoneContentId(content.id);
+    } catch (err) {
+      setPhoneErrors((previous) => ({ ...previous, [content.id]: err instanceof Error ? err.message : 'Could not create phone caption link' }));
+    } finally {
+      setPhoneLoadingId(null);
+    }
+  };
+
+  const openPhoneHandoff = (content: ContentItem) => {
+    if (phoneHandoffs[content.id]) setOpenPhoneContentId(content.id);
+    else void createPhoneHandoff(content);
+  };
+
+  const revokePhoneHandoff = async (contentId: string) => {
+    const handoff = phoneHandoffs[contentId];
+    if (!handoff || handoff.revoked) return;
+    setPhoneLoadingId(contentId);
+    setPhoneErrors((previous) => ({ ...previous, [contentId]: '' }));
+    try {
+      await revokeMobileCaptionHandoff(handoff.handoffId);
+      setPhoneHandoffs((previous) => ({ ...previous, [contentId]: { ...handoff, revoked: true } }));
+    } catch (err) {
+      setPhoneErrors((previous) => ({ ...previous, [contentId]: err instanceof Error ? err.message : 'Could not revoke phone caption link' }));
+    } finally {
+      setPhoneLoadingId(null);
+    }
+  };
+
   return (
     <ErrorBoundary>
     <div className="content-area">
@@ -215,6 +281,8 @@ export default function QueueScreen() {
             const canRetry = content.canRetry && state === 'failed';
             const targetAvailable = targetCanSend(content.targetAccountBinding);
             const hasCaption = Boolean(content.tiktokCaptionHasContent && content.tiktokCaptionText);
+            const phoneHandoff = phoneHandoffs[content.id];
+            const phoneExpired = Boolean(phoneHandoff && Date.parse(phoneHandoff.expiresAt) <= clock);
 
             return (
               <div key={content.id} className="card">
@@ -264,6 +332,37 @@ export default function QueueScreen() {
                 {captionStatus[content.id] && (
                   <div role="status" style={{ margin: '8px 0', fontSize: 13, color: captionStatus[content.id] === 'Caption copied' ? '#047857' : '#b91c1c' }}>
                     {captionStatus[content.id]}
+                  </div>
+                )}
+                {phoneErrors[content.id] && (
+                  <div role="alert" style={{ margin: '8px 0', fontSize: 13, color: '#b91c1c' }}>{phoneErrors[content.id]}</div>
+                )}
+
+                {openPhoneContentId === content.id && phoneHandoff && (
+                  <div role="dialog" aria-label={`Caption handoff for ${content.title}`} style={{ margin: '12px 0', padding: 16, border: '1px solid #d1d5db', borderRadius: 12, background: '#fff' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+                      <strong>Open Caption on Phone</strong>
+                      <button className="btn btn-secondary" type="button" onClick={() => setOpenPhoneContentId(null)}>Close</button>
+                    </div>
+                    {!phoneHandoff.revoked && !phoneExpired ? (
+                      <>
+                        <img src={phoneHandoff.qrDataUrl} alt="Secure mobile caption handoff QR code" style={{ display: 'block', width: 'min(100%, 320px)', margin: '16px auto' }} />
+                        <p style={{ fontSize: 13, color: '#374151' }}>Scan this code on your phone. The phone page can copy the caption; it will not upload or publish to TikTok.</p>
+                        <p style={{ fontSize: 13, color: '#374151', marginTop: 8 }}>QR code expires in 30 minutes. Your content will remain available in PublishOS.</p>
+                        <p style={{ fontSize: 13, fontWeight: 600, marginTop: 8 }}>Expires in {remainingTime(phoneHandoff.expiresAt, clock)}</p>
+                        <button className="btn btn-secondary" type="button" disabled={phoneLoadingId === content.id} onClick={() => void revokePhoneHandoff(content.id)}>
+                          Revoke phone link
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <p style={{ marginTop: 12 }}>{phoneHandoff.revoked ? 'This phone link has been revoked.' : 'This QR code has expired.'}</p>
+                        <p style={{ fontSize: 13, color: '#374151', marginTop: 8 }}>Your content remains available in PublishOS.</p>
+                        <button className="btn btn-primary" type="button" disabled={phoneLoadingId === content.id} onClick={() => void createPhoneHandoff(content)}>
+                          {phoneLoadingId === content.id ? 'Generating...' : 'Generate New QR Code'}
+                        </button>
+                      </>
+                    )}
                   </div>
                 )}
 
@@ -343,6 +442,14 @@ export default function QueueScreen() {
                     onClick={() => void handleCopyCaption(content)}
                   >
                     Copy Caption
+                  </button>
+                  <button
+                    className="btn btn-secondary"
+                    style={{ flex: 1 }}
+                    disabled={!hasCaption || phoneLoadingId === content.id}
+                    onClick={() => openPhoneHandoff(content)}
+                  >
+                    {phoneLoadingId === content.id ? 'Generating...' : 'Open Caption on Phone'}
                   </button>
                   {isActionable(state) && (
                     <button

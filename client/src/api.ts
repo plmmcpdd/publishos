@@ -109,6 +109,12 @@ export interface SendToTikTokResult {
   message?: string;
 }
 
+export interface MobileCaptionHandoff {
+  handoffId: string;
+  url: string;
+  expiresAt: string;
+}
+
 interface ApiContent {
   id: string;
   title: string;
@@ -227,6 +233,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error(message);
   }
 
+  if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
 }
 
@@ -267,6 +274,17 @@ export async function fetchContentDetail(id: string): Promise<ContentItem> {
     `/content/${id}?clientId=${encodeURIComponent(clientId)}`,
   );
   return mapContent(data.data);
+}
+
+export async function createMobileCaptionHandoff(id: string): Promise<MobileCaptionHandoff> {
+  return request<MobileCaptionHandoff>(`/content/${encodeURIComponent(id)}/mobile-caption-handoffs`, {
+    method: 'POST',
+    body: '{}',
+  });
+}
+
+export async function revokeMobileCaptionHandoff(handoffId: string): Promise<void> {
+  await request<void>(`/mobile-caption-handoffs/${encodeURIComponent(handoffId)}`, { method: 'DELETE' });
 }
 
 export async function sendToTikTok(

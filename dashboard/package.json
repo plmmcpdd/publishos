@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build && node scripts/verify-production-api-base.mjs",
+    "build": "tsc -b && vite build && node scripts/verify-production-api-base.mjs && node scripts/verify-mobile-caption-shell.mjs",
     "typecheck": "tsc -b --pretty false",
     "test": "vitest run && node --test test/*.test.mjs",
     "lint": "eslint .",

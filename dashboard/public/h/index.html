@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="referrer" content="no-referrer" />
+    <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'none'; font-src 'none'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'" />
+    <title>PublishOS Caption Handoff</title>
+    <link rel="stylesheet" href="/h/styles.css" />
+    <script src="/h/app.js" defer></script>
+  </head>
+  <body>
+    <main class="shell" aria-live="polite">
+      <header>
+        <p class="eyebrow">PublishOS</p>
+        <h1>Caption Handoff</h1>
+        <p id="expiry-note" class="muted">Loading secure caption…</p>
+      </header>
+
+      <section id="unavailable" class="panel" hidden>
+        <h2>Caption link unavailable</h2>
+        <p id="unavailable-message">This caption link is no longer available. Generate a new QR code in PublishOS.</p>
+      </section>
+
+      <section id="caption-panel" class="panel" hidden>
+        <div class="field">
+          <h2>Content Title</h2>
+          <p id="content-title"></p>
+        </div>
+        <div class="field">
+          <h2>Target TikTok Account</h2>
+          <p id="target-account"></p>
+        </div>
+        <div class="field">
+          <label for="caption-text">TikTok Caption</label>
+          <textarea id="caption-text" readonly spellcheck="false"></textarea>
+        </div>
+        <div class="field">
+          <h2>Hashtags</h2>
+          <p id="hashtags"></p>
+        </div>
+        <div class="field">
+          <h2>Expires</h2>
+          <p id="expires-at"></p>
+        </div>
+        <button id="copy-caption" type="button">Copy Caption</button>
+        <p id="copy-status" class="status" role="status"></p>
+        <p class="muted">Copy the caption, return to TikTok Inbox, paste, review, and publish.</p>
+      </section>
+    </main>
+  </body>
+</html>
