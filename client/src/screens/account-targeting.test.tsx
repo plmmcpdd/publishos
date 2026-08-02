@@ -5,6 +5,7 @@ import userEvent from '@testing-library/user-event';
 const api = vi.hoisted(() => ({
   fetchTikTokBindings: vi.fn(), getTikTokAuthUrl: vi.fn(), disconnectTikTokBinding: vi.fn(), bindingConnectionChanged: vi.fn(),
   fetchDeliveredContents: vi.fn(), fetchContentDetail: vi.fn(), sendToTikTok: vi.fn(), refreshPublishStatus: vi.fn(), retryTikTok: vi.fn(),
+  createMobileCaptionHandoff: vi.fn(), revokeMobileCaptionHandoff: vi.fn(),
   api: { base: 'http://test/v1', hostname: 'test', setBase: vi.fn(), resetBase: vi.fn() }, APP_ENV: 'test', checkServerConnection: vi.fn(),
 }));
 vi.mock('../api', () => api);

@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 
 const api = vi.hoisted(() => ({
   fetchDeliveredContents: vi.fn(), fetchContentDetail: vi.fn(), sendToTikTok: vi.fn(), refreshPublishStatus: vi.fn(), retryTikTok: vi.fn(),
+  createMobileCaptionHandoff: vi.fn(), revokeMobileCaptionHandoff: vi.fn(),
   api: { base: 'http://test/v1' },
 }));
 vi.mock('../api', () => api);
