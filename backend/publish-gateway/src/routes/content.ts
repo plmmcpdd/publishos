@@ -15,11 +15,14 @@ const router = Router();
 const clientVisibleStatuses = ['delivered', 'failed', 'published'] as const;
 const safeClient = { id: true, name: true, email: true, industry: true, active: true, createdAt: true, updatedAt: true } as const;
 const safeAccountBinding = {
-  id: true, clientId: true, platform: true, accountUsername: true, platformUserId: true,
+  // platformUserId is an OAuth-provider identifier, not data the dashboard or
+  // client needs in a content response. Keep this selection deliberately safe.
+  id: true, clientId: true, platform: true, accountUsername: true,
   username: true, status: true, active: true, expiresAt: true, createdAt: true, updatedAt: true,
 } as const;
 const safeTargetAccountBinding = {
   id: true, accountUsername: true, username: true, status: true, active: true, reauthorizationRequired: true,
+  grantedScopes: true,
 } as const;
 const safePublishJob = {
   id: true, contentId: true, accountBindingId: true, platform: true, status: true, scheduleAt: true,
@@ -138,6 +141,7 @@ function serializeContent(content: any, audience = 'content') {
       status: content.targetAccountBinding.status,
       active: content.targetAccountBinding.active,
       reauthorizationRequired: content.targetAccountBinding.reauthorizationRequired,
+      grantedScopes: scopes(content.targetAccountBinding),
     } : null,
     platform: firstPlatform(content.platforms),
     videoUrl: video,
@@ -560,6 +564,7 @@ async function sendToTikTok(req: Request, res: Response): Promise<void> {
           deviceId,
           details: JSON.stringify({
             contentId: existing.id,
+            clientId: scopedClientId,
             targetAccountBindingId: binding.id,
             targetAccountUsername: binding.accountUsername,
             captionHash,
