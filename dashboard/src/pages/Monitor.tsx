@@ -1,6 +1,6 @@
 export default function Monitor() {
   const checks = [
-    { label: 'API 网关', status: '正常', detail: 'http://localhost:3000' },
+    { label: 'API 网关', status: '正常', detail: '同源 /v1' },
     { label: '内容队列', status: '运行中', detail: '使用本地 SQLite 数据库' },
     { label: '审计日志', status: '已启用', detail: '记录审核与发布动作' },
   ];
