@@ -7,7 +7,7 @@ import { authenticateToken, clientIdFromAuth, requireAdmin, requireClient } from
 import { AppError, sendInternalError } from '../middleware/errors';
 import { createOrGetActivePublishJob, transitionContent } from '../domain/publishing-state';
 import { signedMediaUrl } from '../services/media-signing';
-import { buildTikTokDeliveryContract, normalizeHashtags } from '../services/tiktok-content';
+import { buildTikTokDeliveryContract, composeTikTokCaption } from '../services/tiktok-content';
 import { deliveryMessage, deriveDeliveryState } from '../services/publishing-view';
 import { contentRefFromAliases } from '../services/content-ref';
 
@@ -115,18 +115,13 @@ async function requireTargetTikTokBinding(clientId: string, bindingId: string | 
 function serializeContent(content: any, audience = 'content') {
   if (!content) return content;
   const latestJob = content.publishJobs?.[0];
-  let hashtags: string[] = [];
-  try {
-    hashtags = normalizeHashtags(content.hashtags || '');
-  } catch {
-    hashtags = [];
-  }
   let contract: ReturnType<typeof buildTikTokDeliveryContract> | undefined;
   try {
     contract = buildTikTokDeliveryContract(content);
   } catch {
     contract = undefined;
   }
+  const handoff = composeTikTokCaption(content);
   const deliveryState = deriveDeliveryState(content, latestJob);
   const video = content.videoUrl ? signedMediaUrl(content.videoUrl, `${audience}:video:${content.id}`).url : null;
   const thumbnail = content.thumbnailUrl
@@ -147,7 +142,9 @@ function serializeContent(content: any, audience = 'content') {
     videoUrl: video,
     thumbnailUrl: thumbnail,
     thumbnail_url: thumbnail,
-    hashtags,
+    hashtags: handoff.hashtags,
+    tiktokCaptionText: handoff.text,
+    tiktokCaptionHasContent: handoff.hasContent,
     finalCaption: latestJob?.finalCaption || contract?.finalCaption || (content.caption || content.description),
     aiDisclosure: {
       required: latestJob?.aiDisclosureRequired ?? Boolean(content.aiGenerated),

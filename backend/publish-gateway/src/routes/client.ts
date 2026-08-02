@@ -6,6 +6,7 @@ import { authenticateToken, clientIdFromAuth, requireAdmin, requireClient, requi
 import { AppError, sendInternalError } from '../middleware/errors';
 import { transitionJob } from '../domain/publishing-state';
 import { signedMediaUrl } from '../services/media-signing';
+import { composeTikTokCaption } from '../services/tiktok-content';
 
 const router = Router();
 
@@ -157,6 +158,7 @@ router.get('/queue', authenticateToken, requireDevice, async (req, res) => {
     });
     if (!claimed) return null;
 
+    const handoff = composeTikTokCaption(job.content);
     return {
       job_id: job.id,
       job_token: taskToken,
@@ -164,6 +166,9 @@ router.get('/queue', authenticateToken, requireDevice, async (req, res) => {
       title: job.content.title,
       description: job.content.description,
       caption: job.content.caption,
+      hashtags: handoff.hashtags,
+      tiktok_caption_text: handoff.text,
+      tiktok_caption_has_content: handoff.hasContent,
       media_url: signedMediaUrl(job.content.videoUrl, `device:${deviceId}:job:${job.id}`).url,
       thumbnail_url: job.content.thumbnailUrl ? signedMediaUrl(job.content.thumbnailUrl, `device:${deviceId}:job:${job.id}`).url : undefined,
       platform: job.platform,
@@ -175,6 +180,10 @@ router.get('/queue', authenticateToken, requireDevice, async (req, res) => {
       },
       account_binding_id: job.accountBindingId,
       account_username: job.accountBinding.accountUsername,
+      target_account_binding: {
+        id: job.accountBindingId,
+        account_username: job.accountBinding.accountUsername,
+      },
       scheduled_at: job.scheduleAt,
       deadline: job.scheduleAt ? new Date(job.scheduleAt.getTime() + 30 * 60000) : null, // 30min grace
     };

@@ -11,6 +11,11 @@ type CaptionSource = {
   aiGenerated: boolean;
 };
 
+type CaptionHandoffSource = {
+  caption?: string | null;
+  hashtags?: unknown;
+};
+
 function hashtagValues(raw: string): string[] {
   const trimmed = raw.trim();
   if (!trimmed) return [];
@@ -24,6 +29,57 @@ function hashtagValues(raw: string): string[] {
   }
 
   return trimmed.split(/[\s,]+/u);
+}
+
+/**
+ * Normalizes Content.hashtags for the manual Inbox handoff. Unlike the
+ * delivery validator this deliberately tolerates malformed legacy values so a
+ * queue read remains safe and read-only for old Content rows.
+ */
+function handoffHashtagValues(raw: unknown): string[] {
+  if (Array.isArray(raw)) return raw.flatMap((value) => handoffHashtagValues(value));
+  if (typeof raw !== 'string') return [];
+  const trimmed = raw.trim();
+  if (!trimmed) return [];
+
+  try {
+    const parsed: unknown = JSON.parse(trimmed);
+    if (parsed !== raw) return handoffHashtagValues(parsed);
+  } catch {
+    // Older rows may use plain comma/whitespace separated tags.
+  }
+
+  return trimmed.split(/[\s,]+/u);
+}
+
+export type TikTokCaptionHandoff = {
+  body: string;
+  hashtags: string[];
+  text: string;
+  hasContent: boolean;
+};
+
+/**
+ * Produces exactly the text an operator must paste after Inbox Upload. It is
+ * intentionally independent of upload/OAuth/account-binding concerns.
+ */
+export function composeTikTokCaption(source: CaptionHandoffSource): TikTokCaptionHandoff {
+  const body = typeof source.caption === 'string' ? source.caption.trim() : '';
+  const seen = new Set<string>();
+  const hashtags: string[] = [];
+
+  for (const candidate of handoffHashtagValues(source.hashtags)) {
+    const name = candidate.trim().replace(/^#+/u, '');
+    if (!name || !/^[\p{L}\p{M}\p{N}_]+$/u.test(name)) continue;
+    const key = name.toLocaleLowerCase('en-US');
+    if (seen.has(key)) continue;
+    seen.add(key);
+    hashtags.push(`#${name}`);
+  }
+
+  const hashtagText = hashtags.join(' ');
+  const text = body && hashtagText ? `${body}\n\n${hashtagText}` : body || hashtagText;
+  return { body, hashtags, text, hasContent: Boolean(text) };
 }
 
 export function normalizeHashtags(raw: string): string[] {
