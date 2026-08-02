@@ -27,6 +27,7 @@ model Client {
   contents                 Content[]
   performanceMetrics       PerformanceMetrics[]
   oauthAuthorizationStates OAuthAuthorizationState[]
+  mobileCaptionHandoffs    MobileCaptionHandoff[]
 }
 
 model OAuthAuthorizationState {
@@ -114,9 +115,30 @@ model Content {
   clientConfirmedBy       String?
   publishLogs             PublishLog[]
   performanceMetrics      PerformanceMetrics[]
+  mobileCaptionHandoffs   MobileCaptionHandoff[]
 
   @@unique([clientId, contentRef])
   @@index([targetAccountBindingId])
+}
+
+model MobileCaptionHandoff {
+  id                    String    @id @default(cuid())
+  tokenHash             String    @unique
+  contentId             String
+  clientId              String
+  titleSnapshot         String
+  targetAccountSnapshot String?
+  captionSnapshot       String?
+  hashtagsSnapshot      String
+  captionTextSnapshot   String
+  createdAt             DateTime  @default(now())
+  expiresAt             DateTime
+  revokedAt             DateTime?
+  content               Content   @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  client                Client    @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@index([clientId, contentId, expiresAt])
+  @@index([expiresAt])
 }
 
 model ContentAsset {
