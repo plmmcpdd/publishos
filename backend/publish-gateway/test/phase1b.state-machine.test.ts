@@ -40,7 +40,7 @@ async function pushTemporaryDatabase(): Promise<void> {
 
 async function createContent(status: any) {
   return prisma.content.create({ data: {
-    clientId, title: `Content ${status} ${crypto.randomUUID()}`, description: 'state machine test',
+    clientId, targetAccountBindingId: bindingId, title: `Content ${status} ${crypto.randomUUID()}`, description: 'state machine test',
     videoUrl: 'mock/state.mp4', platforms: '["tiktok"]', status,
   } });
 }
@@ -65,7 +65,7 @@ beforeAll(async () => {
   const client = await prisma.client.create({ data: { name: 'State Client', email: 'state-client@test.local', password } });
   clientId = client.id;
   bindingId = (await prisma.accountBinding.create({ data: {
-    clientId, platform: 'tiktok', accountUsername: 'state-machine-account', accessToken: 'test-access-token',
+    clientId, platform: 'tiktok', accountUsername: 'state-machine-account', accessToken: 'safe-test-placeholder', grantedScopes: '["video.upload","video.list"]',
   } })).id;
   adminToken = (await request(app).post('/v1/auth/admin/login').send({ email: admin.email, password: 'test-password' })).body.data.token;
 });
@@ -94,7 +94,7 @@ describe('Phase 1B content state matrix', () => {
   it('creates only draft and pending_review content', async () => {
     for (const status of ['draft', 'pending_review']) {
       const result = await request(app).post('/v1/content').set('Authorization', `Bearer ${adminToken}`).send({
-        clientId, title: `create ${status}`, description: 'creation matrix', status,
+        clientId, targetAccountBindingId: bindingId, title: `create ${status}`, description: 'creation matrix', status,
       });
       expect(result.status).toBe(201);
       expect(result.body.data.status).toBe(status);

@@ -26,6 +26,7 @@ let clientA = '';
 let clientB = '';
 let admin = '';
 let contentA = '';
+let bindingA = '';
 const ref = '2026-07-25_ab61ed09f0a1_example-title';
 const bridge = `Bearer ${process.env.OPS_BRAIN_BRIDGE_TOKEN}`;
 const TIMELINE_NOW = new Date('2026-07-28T00:00:00.000Z');
@@ -44,10 +45,11 @@ beforeAll(async () => {
     prisma.client.create({ data: { name: 'B', email: 'b@example.test', password: 'hash' } }),
   ]);
   admin = adminRow.id; clientA = a.id; clientB = b.id;
-  const content = await prisma.content.create({ data: { clientId: a.id, contentRef: ref, title: 'Example', description: 'desc', videoUrl: 'mock/video.mp4', platforms: '["tiktok"]', status: 'published' } });
+  const binding = await prisma.accountBinding.create({ data: { clientId: a.id, platform: 'tiktok', accountUsername: 'a', accessToken: 'safe-test-placeholder', grantedScopes: '["video.upload","video.list"]', collectionStatus: 'success', lastCollectionAttemptAt: new Date('2026-07-25T12:00:00Z'), lastCollectionSuccessAt: new Date('2026-07-25T12:01:00Z') } });
+  bindingA = binding.id;
+  const content = await prisma.content.create({ data: { clientId: a.id, targetAccountBindingId: binding.id, contentRef: ref, title: 'Example', description: 'desc', videoUrl: 'mock/video.mp4', platforms: '["tiktok"]', status: 'published' } });
   contentA = content.id;
   await prisma.content.create({ data: { clientId: b.id, contentRef: ref, title: 'Other tenant', description: 'desc', videoUrl: 'mock/video.mp4', platforms: '["tiktok"]' } });
-  const binding = await prisma.accountBinding.create({ data: { clientId: a.id, platform: 'tiktok', accountUsername: 'a', collectionStatus: 'success', lastCollectionAttemptAt: new Date('2026-07-25T12:00:00Z'), lastCollectionSuccessAt: new Date('2026-07-25T12:01:00Z') } });
   const job = await prisma.publishJob.create({ data: { contentId: content.id, accountBindingId: binding.id, platform: 'tiktok', status: 'published' } });
   const postA = await prisma.publishedPost.create({ data: { publishJobId: job.id, accountBindingId: binding.id, platform: 'tiktok', platformPostId: 'post-a', publishedAt: new Date('2026-07-20T00:00:00Z') } });
   const postB = await prisma.publishedPost.create({ data: { publishJobId: job.id, accountBindingId: binding.id, platform: 'tiktok', platformPostId: 'post-b' } });
@@ -108,9 +110,9 @@ describe('Phase 2B-A Ops Brain bridge', () => {
   });
 
   it('creates and patches content references with aliases, tenant uniqueness, and audit history', async () => {
-    const create = await request(app).post('/v1/content').set('Authorization', `Bearer ${adminToken()}`).send({ clientId: clientA, title: 'Unicode', description: 'desc', content_ref: '  中文-内容_1  ' }).expect(201);
+    const create = await request(app).post('/v1/content').set('Authorization', `Bearer ${adminToken()}`).send({ clientId: clientA, targetAccountBindingId: bindingA, title: 'Unicode', description: 'desc', content_ref: '  中文-内容_1  ' }).expect(201);
     expect(create.body.data.contentRef).toBe('中文-内容_1');
-    await request(app).post('/v1/content').set('Authorization', `Bearer ${adminToken()}`).send({ clientId: clientA, title: 'Conflict', description: 'desc', contentRef: '中文-内容_1' }).expect(409);
+    await request(app).post('/v1/content').set('Authorization', `Bearer ${adminToken()}`).send({ clientId: clientA, targetAccountBindingId: bindingA, title: 'Conflict', description: 'desc', contentRef: '中文-内容_1' }).expect(409);
     await request(app).post('/v1/content').set('Authorization', `Bearer ${adminToken()}`).send({ clientId: clientA, title: 'Mismatch', description: 'desc', contentRef: 'a', content_ref: 'b' }).expect(422);
     const patch = await request(app).patch(`/v1/content/${contentA}/content-ref`).set('Authorization', `Bearer ${adminToken()}`).send({ contentRef: 'replacement-ref' }).expect(200);
     expect(patch.body.data.contentRef).toBe('replacement-ref');

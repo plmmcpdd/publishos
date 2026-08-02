@@ -30,6 +30,7 @@ let clientBToken = '';
 let clientAId = '';
 let clientBId = '';
 let contentAId = '';
+let bindingAId = '';
 
 async function pushTemporaryDatabase(): Promise<void> {
   // Prisma 7's SQLite connectivity preflight requires the file to exist.
@@ -67,10 +68,11 @@ beforeAll(async () => {
   const clientB = await prisma.client.create({ data: { name: 'B', email: 'b@test.local', password } });
   clientAId = clientA.id;
   clientBId = clientB.id;
-  const contentA = await prisma.content.create({ data: { clientId: clientA.id, title: 'A content', description: 'test', videoUrl: 'mock/a.mp4', platforms: '["tiktok"]', status: 'delivered' } });
+  const bindingA = await prisma.accountBinding.create({ data: { clientId: clientA.id, platform: 'tiktok', accountUsername: 'a-account', accessToken: 'safe-test-placeholder', grantedScopes: '["video.upload","video.list"]' } });
+  bindingAId = bindingA.id;
+  const contentA = await prisma.content.create({ data: { clientId: clientA.id, targetAccountBindingId: bindingA.id, title: 'A content', description: 'test', videoUrl: 'mock/a.mp4', platforms: '["tiktok"]', status: 'delivered' } });
   contentAId = contentA.id;
   const contentB = await prisma.content.create({ data: { clientId: clientB.id, title: 'B content', description: 'test', videoUrl: 'mock/b.mp4', platforms: '["tiktok"]', status: 'delivered' } });
-  await prisma.accountBinding.create({ data: { clientId: clientA.id, platform: 'tiktok', accountUsername: 'a-account', accessToken: 'test-only-access-token' } });
   const bindingB = await prisma.accountBinding.create({ data: { clientId: clientB.id, platform: 'tiktok', accountUsername: 'b-account' } });
   await prisma.publishJob.create({ data: { contentId: contentB.id, accountBindingId: bindingB.id, platform: 'tiktok', status: 'dispatched' } });
   adminToken = (await request(app).post('/v1/auth/admin/login').send({ email: admin.email, password: 'test-password' })).body.data.token;
@@ -205,7 +207,7 @@ describe('Phase 1A authentication and tenant isolation', () => {
     const created = await request(app)
       .post('/v1/content')
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ clientId: clientAId, title: 'Admin-created content', description: 'test', videoUrl: 'mock/admin.mp4', platforms: ['tiktok'] });
+      .send({ clientId: clientAId, targetAccountBindingId: bindingAId, title: 'Admin-created content', description: 'test', videoUrl: 'mock/admin.mp4', platforms: ['tiktok'] });
     expect(created.status).toBe(201);
     const contentId = created.body.data.id as string;
     expect((await request(app).post(`/v1/content/${contentId}/approve`).set('Authorization', `Bearer ${adminToken}`)).status).toBe(200);
@@ -302,7 +304,7 @@ describe('Phase 1B state machines and task replay protection', () => {
 
   it('rolls back client send-to-tiktok when its audit insert fails and retries idempotently', async () => {
     publisherMock.publishToTikTok.mockClear();
-    const content = await prisma.content.create({ data: { clientId: clientAId, title: 'Client audit rollback', description: 'test', videoUrl: 'mock/client-audit.mp4', platforms: '["tiktok"]', status: 'delivered' } });
+    const content = await prisma.content.create({ data: { clientId: clientAId, targetAccountBindingId: bindingAId, title: 'Client audit rollback', description: 'test', videoUrl: 'mock/client-audit.mp4', platforms: '["tiktok"]', status: 'delivered' } });
     await prisma.$executeRawUnsafe('CREATE TRIGGER force_client_publish_audit_failure BEFORE INSERT ON "AuditLog" WHEN NEW.action = \'tiktok_send_requested\' AND NEW.actorType = \'client\' BEGIN SELECT RAISE(ABORT, \'forced client audit rollback\'); END;');
     try {
       const failed = await request(app).post(`/v1/content/${content.id}/send-to-tiktok`).set('Authorization', `Bearer ${clientAToken}`).send({ clientId: clientAId, contentConfirmed: true, deviceId: 'client-audit-device' });
@@ -369,7 +371,7 @@ describe('Phase 1B state machines and task replay protection', () => {
     expect(forbidden.status).toBe(422);
 
     const created = await request(app).post('/v1/content').set('Authorization', `Bearer ${adminToken}`).send({
-      clientId: clientAId, title: 'State lifecycle', description: 'test', videoUrl: 'mock/state.mp4', platforms: ['tiktok'], status: 'pending_review',
+      clientId: clientAId, targetAccountBindingId: bindingAId, title: 'State lifecycle', description: 'test', videoUrl: 'mock/state.mp4', platforms: ['tiktok'], status: 'pending_review',
     });
     expect(created.status).toBe(201);
     const contentId = created.body.data.id as string;
@@ -396,7 +398,7 @@ describe('Phase 1B state machines and task replay protection', () => {
 
   it('deduplicates concurrent send-to-tiktok at the database constraint', async () => {
     publisherMock.publishToTikTok.mockClear();
-    const content = await prisma.content.create({ data: { clientId: clientAId, title: 'Concurrent confirmation', description: 'test', videoUrl: 'mock/concurrent.mp4', platforms: '[\"tiktok\"]', status: 'delivered' } });
+    const content = await prisma.content.create({ data: { clientId: clientAId, targetAccountBindingId: bindingAId, title: 'Concurrent confirmation', description: 'test', videoUrl: 'mock/concurrent.mp4', platforms: '[\"tiktok\"]', status: 'delivered' } });
     const responses = await Promise.all([
       request(app).post(`/v1/content/${content.id}/send-to-tiktok`).set('Authorization', `Bearer ${clientAToken}`).send({ clientId: clientAId, contentConfirmed: true }),
       request(app).post(`/v1/content/${content.id}/send-to-tiktok`).set('Authorization', `Bearer ${clientAToken}`).send({ clientId: clientAId, contentConfirmed: true }),
@@ -495,7 +497,7 @@ describe('Phase 1B state machines and task replay protection', () => {
 
   it('allows AI content send with explicit customer AI disclosure acknowledgement', async () => {
     publisherMock.publishToTikTok.mockClear();
-    const aiContent = await prisma.content.create({ data: { clientId: clientAId, title: 'AI content acked', description: 'test', videoUrl: 'mock/ai-ack.mp4', platforms: '["tiktok"]', status: 'delivered', aiGenerated: true, aiDisclosureConfirmed: true, aiDisclosureConfirmedAt: new Date() } });
+    const aiContent = await prisma.content.create({ data: { clientId: clientAId, targetAccountBindingId: bindingAId, title: 'AI content acked', description: 'test', videoUrl: 'mock/ai-ack.mp4', platforms: '["tiktok"]', status: 'delivered', aiGenerated: true, aiDisclosureConfirmed: true, aiDisclosureConfirmedAt: new Date() } });
     const acked = await request(app).post(`/v1/content/${aiContent.id}/send-to-tiktok`).set('Authorization', `Bearer ${clientAToken}`).send({ clientId: clientAId, contentConfirmed: true, aiDisclosureAcknowledged: true });
     expect(acked.status).toBe(202);
     expect(acked.body.data.publishJobId).toBeDefined();
@@ -508,7 +510,7 @@ describe('Phase 1B state machines and task replay protection', () => {
 
   it('does not require AI acknowledgement for non-AI content', async () => {
     publisherMock.publishToTikTok.mockClear();
-    const nonAiContent = await prisma.content.create({ data: { clientId: clientAId, title: 'Non-AI content', description: 'test', videoUrl: 'mock/non-ai.mp4', platforms: '["tiktok"]', status: 'delivered', aiGenerated: false } });
+    const nonAiContent = await prisma.content.create({ data: { clientId: clientAId, targetAccountBindingId: bindingAId, title: 'Non-AI content', description: 'test', videoUrl: 'mock/non-ai.mp4', platforms: '["tiktok"]', status: 'delivered', aiGenerated: false } });
     const result = await request(app).post(`/v1/content/${nonAiContent.id}/send-to-tiktok`).set('Authorization', `Bearer ${clientAToken}`).send({ clientId: clientAId, contentConfirmed: true });
     expect(result.status).toBe(202);
     expect(publisherMock.publishToTikTok).toHaveBeenCalledTimes(1);
